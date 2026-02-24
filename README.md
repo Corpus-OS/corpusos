@@ -162,14 +162,49 @@ class QuickAdapter(BaseLLMAdapter):
 
 # Usage
 async def main():
+    print("=" * 80)
+    print("Quick LLM Adapter Demo")
+    print("=" * 80)
+    
     adapter = QuickAdapter()
     ctx = OperationContext(request_id="test-123")
+    
+    # Test 1: Capabilities
+    caps = await adapter.capabilities()
+    print(f"\n✅ Capabilities:")
+    print(f"   Server: {caps.server} v{caps.version}")
+    print(f"   Model family: {caps.model_family}")
+    print(f"   Max context: {caps.max_context_length}")
+    
+    # Test 2: Completion
     result = await adapter.complete(
-        messages=[{"role": "user", "content": "Hi"}], ctx=ctx
+        messages=[{"role": "user", "content": "Hi"}], 
+        ctx=ctx
     )
-    print(result.text)  # "Hello from CORPUS!"
+    print(f"\n✅ Completion:")
+    print(f"   Response: {result.text}")
+    print(f"   Model: {result.model}")
+    print(f"   Tokens used: {result.usage.total_tokens} (prompt: {result.usage.prompt_tokens}, completion: {result.usage.completion_tokens})")
+    print(f"   Finish reason: {result.finish_reason}")
+    
+    # Test 3: Token counting
+    tokens = await adapter.count_tokens("This is a test message")
+    print(f"\n✅ Token Counting:")
+    print(f"   Text: 'This is a test message'")
+    print(f"   Tokens: {tokens}")
+    
+    # Test 4: Health check
+    health = await adapter.health()
+    print(f"\n✅ Health Check:")
+    print(f"   OK: {health.get('ok', False)}")
+    print(f"   Server: {health.get('server', 'unknown')}")
+    
+    print("\n" + "=" * 80)
+    print("✅ All tests passed!")
+    print("=" * 80)
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
 A complete quick start with all four protocols is in [`docs/guides/QUICK_START.md`](docs/guides/QUICK_START.md).
@@ -226,16 +261,55 @@ class QuickEmbeddingAdapter(BaseEmbeddingAdapter):
 
 # Usage
 async def main():
+    print("=" * 80)
+    print("Quick Embedding Adapter Demo")
+    print("=" * 80)
+    
     async with QuickEmbeddingAdapter() as adapter:
         ctx = OperationContext(request_id="req-1", tenant="acme")
+        
+        # Test 1: Capabilities
+        caps = await adapter.capabilities()
+        print(f"\n✅ Capabilities:")
+        print(f"   Server: {caps.server} v{caps.version}")
+        print(f"   Supported models: {caps.supported_models}")
+        print(f"   Max batch size: {caps.max_batch_size}")
+        print(f"   Max text length: {caps.max_text_length}")
+        print(f"   Supports normalization: {caps.supports_normalization}")
+        print(f"   Supports deadline: {caps.supports_deadline}")
+        
+        # Test 2: Embedding
         res = await adapter.embed(
             EmbedSpec(text="hello world", model="quick-embed-001"), ctx=ctx
         )
-        print(f"Text: '{res.text}'")
-        print(f"Vector: {res.embedding.vector}")
-        print(f"Dimensions: {res.embedding.dimensions}")
+        print(f"\n✅ Embedding:")
+        print(f"   Text: '{res.text}'")
+        print(f"   Vector: {res.embedding.vector}")
+        print(f"   Dimensions: {res.embedding.dimensions}")
+        print(f"   Model: {res.model}")
+        print(f"   Truncated: {res.truncated}")
+        
+        # Test 3: Multiple embeddings
+        texts = ["first text", "second text", "third text"]
+        print(f"\n✅ Multiple Embeddings:")
+        for i, text in enumerate(texts, 1):
+            res = await adapter.embed(
+                EmbedSpec(text=text, model="quick-embed-001"), ctx=ctx
+            )
+            print(f"   {i}. '{text}' → {res.embedding.dimensions}D vector")
+        
+        # Test 4: Health check
+        health = await adapter.health()
+        print(f"\n✅ Health Check:")
+        print(f"   OK: {health.get('ok', False)}")
+        print(f"   Server: {health.get('server', 'unknown')} v{health.get('version', 'unknown')}")
+        
+        print("\n" + "=" * 80)
+        print("✅ All tests passed!")
+        print("=" * 80)
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 </details>
 
@@ -282,18 +356,68 @@ class QuickLLMAdapter(BaseLLMAdapter):
 
 # Usage
 async def main():
+    print("=" * 80)
+    print("Quick LLM Adapter Demo")
+    print("=" * 80)
+    
     async with QuickLLMAdapter() as adapter:
         ctx = OperationContext(request_id="req-2", tenant="acme")
+        
+        # Test 1: Capabilities
+        caps = await adapter.capabilities()
+        print(f"\n✅ Capabilities:")
+        print(f"   Server: {caps.server} v{caps.version}")
+        print(f"   Model family: {caps.model_family}")
+        print(f"   Max context length: {caps.max_context_length}")
+        print(f"   Supports streaming: {caps.supports_streaming}")
+        print(f"   Supports roles: {caps.supports_roles}")
+        print(f"   Supports system message: {caps.supports_system_message}")
+        print(f"   Supports multi-tenant: {caps.supports_multi_tenant}")
+        
+        # Test 2: Completion
         resp = await adapter.complete(
             messages=[{"role": "user", "content": "Say hi"}],
             model="quick-llm-001",
             ctx=ctx,
         )
-        print(f"Response: {resp.text}")
-        print(f"Model: {resp.model}")
-        print(f"Tokens: {resp.usage.total_tokens}")
+        print(f"\n✅ Completion:")
+        print(f"   Response: {resp.text}")
+        print(f"   Model: {resp.model}")
+        print(f"   Model family: {resp.model_family}")
+        print(f"   Tokens: {resp.usage.total_tokens} (prompt: {resp.usage.prompt_tokens}, completion: {resp.usage.completion_tokens})")
+        print(f"   Finish reason: {resp.finish_reason}")
+        
+        # Test 3: Multi-message conversation
+        messages = [
+            {"role": "system", "content": "You are a helpful assistant"},
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": "Hi there!"},
+            {"role": "user", "content": "How are you?"}
+        ]
+        resp = await adapter.complete(messages=messages, model="quick-llm-001", ctx=ctx)
+        print(f"\n✅ Multi-turn Conversation:")
+        print(f"   Messages: {len(messages)} turns")
+        print(f"   Response: {resp.text}")
+        
+        # Test 4: Token counting
+        test_text = "This is a longer text to count tokens for testing purposes"
+        tokens = await adapter.count_tokens(test_text, model="quick-llm-001")
+        print(f"\n✅ Token Counting:")
+        print(f"   Text: '{test_text}'")
+        print(f"   Tokens: {tokens}")
+        
+        # Test 5: Health check
+        health = await adapter.health()
+        print(f"\n✅ Health Check:")
+        print(f"   OK: {health.get('ok', False)}")
+        print(f"   Server: {health.get('server', 'unknown')} v{health.get('version', 'unknown')}")
+        
+        print("\n" + "=" * 80)
+        print("✅ All tests passed!")
+        print("=" * 80)
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 </details>
 
@@ -301,6 +425,7 @@ asyncio.run(main())
 <summary><strong>Vector</strong></summary>
 
 ```python
+
 import asyncio
 from corpus_sdk.vector.vector_base import (
     BaseVectorAdapter, VectorCapabilities, QuerySpec, UpsertSpec, UpsertResult,
@@ -366,10 +491,20 @@ class QuickVectorAdapter(BaseVectorAdapter):
 
 # Usage - Complete flow
 async def main():
+    print("=" * 80)
+    print("Quick Vector Adapter Demo")
+    print("=" * 80)
+    
     adapter = QuickVectorAdapter()
     ctx = OperationContext(request_id="req-3", tenant="acme")
     
-    # 1. Add vectors to the store
+    # Test 1: Capabilities
+    caps = await adapter.capabilities()
+    print(f"\n✅ Capabilities:")
+    print(f"   Server: {caps.server} v{caps.version}")
+    print(f"   Max dimensions: {caps.max_dimensions}")
+    
+    # Test 2: Upsert vectors
     vectors_to_add = [
         Vector(id=VectorID("v1"), vector=[0.1, 0.2, 0.3], metadata={"label": "first"}),
         Vector(id=VectorID("v2"), vector=[0.4, 0.5, 0.6], metadata={"label": "second"}),
@@ -380,19 +515,64 @@ async def main():
         UpsertSpec(vectors=vectors_to_add),
         ctx=ctx
     )
-    print(f"✅ Upserted {upsert_result.upserted_count} vectors")
+    print(f"\n✅ Upsert:")
+    print(f"   Upserted: {upsert_result.upserted_count} vectors")
+    print(f"   Failed: {upsert_result.failed_count} vectors")
     
-    # 2. Query for similar vectors
+    # Test 3: Query for similar vectors (top_k=2 REQUIRED by SDK)
     query_result = await adapter.query(
         QuerySpec(vector=[0.1, 0.2, 0.3], top_k=2),
         ctx=ctx
     )
-    print(f"\n🔍 Query vector: {query_result.query_vector}")
-    print(f"Found {len(query_result.matches)} matches:")
+    print(f"\n✅ Query (top 2):")
+    print(f"   Query vector: {query_result.query_vector}")
+    print(f"   Total matches: {query_result.total_matches}")
+    print(f"   Results:")
     for i, match in enumerate(query_result.matches, 1):
-        print(f"  {i}. ID: {match.vector.id}, Score: {match.score:.3f}, Metadata: {match.vector.metadata}")
+        print(f"      {i}. ID: {match.vector.id}, Score: {match.score:.3f}, Distance: {match.distance:.3f}")
+        print(f"         Metadata: {match.vector.metadata}")
+    
+    # Test 4: Query all vectors (with top_k=10)
+    query_result_all = await adapter.query(
+        QuerySpec(vector=[0.5, 0.5, 0.5], top_k=10),
+        ctx=ctx
+    )
+    print(f"\n✅ Query (all matches):")
+    print(f"   Query vector: [0.5, 0.5, 0.5]")
+    print(f"   Total matches: {query_result_all.total_matches}")
+    for i, match in enumerate(query_result_all.matches, 1):
+        print(f"      {i}. ID: {match.vector.id}, Score: {match.score:.3f}")
+    
+    # Test 5: Namespace support
+    ns_vectors = [
+        Vector(id=VectorID("ns1"), vector=[0.9, 0.8, 0.7], metadata={"type": "namespace_test"}),
+    ]
+    upsert_ns = await adapter.upsert(
+        UpsertSpec(vectors=ns_vectors, namespace="test-namespace"),
+        ctx=ctx
+    )
+    print(f"\n✅ Namespace Support:")
+    print(f"   Upserted {upsert_ns.upserted_count} vector(s) to 'test-namespace'")
+    
+    query_ns = await adapter.query(
+        QuerySpec(vector=[0.9, 0.8, 0.7], top_k=5, namespace="test-namespace"),
+        ctx=ctx
+    )
+    print(f"   Query in 'test-namespace': {query_ns.total_matches} match(es)")
+    
+    # Test 6: Health check
+    health = await adapter.health()
+    print(f"\n✅ Health Check:")
+    print(f"   OK: {health.get('ok', False)}")
+    print(f"   Server: {health.get('server', 'unknown')} v{health.get('version', 'unknown')}")
+    
+    print("\n" + "=" * 80)
+    print("✅ All tests passed!")
+    print("=" * 80)
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
+
 ```
 </details>
 
@@ -448,33 +628,73 @@ class QuickGraphAdapter(BaseGraphAdapter):
 
 # Usage
 async def main():
+    print("=" * 80)
+    print("Quick Graph Adapter Demo")
+    print("=" * 80)
+    
     async with QuickGraphAdapter() as adapter:
         ctx = OperationContext(request_id="req-4", tenant="acme")
         
-        # Upsert nodes
+        # Test 1: Capabilities
+        caps = await adapter.capabilities()
+        print(f"\n✅ Capabilities:")
+        print(f"   Server: {caps.server} v{caps.version}")
+        print(f"   Supported dialects: {caps.supported_query_dialects}")
+        print(f"   Supports streaming: {caps.supports_stream_query}")
+        print(f"   Supports bulk vertices: {caps.supports_bulk_vertices}")
+        print(f"   Supports batch: {caps.supports_batch}")
+        print(f"   Supports schema: {caps.supports_schema}")
+        
+        # Test 2: Upsert nodes
         result = await adapter.upsert_nodes(
             UpsertNodesSpec(nodes=[
                 Node(
                     id=GraphID("user:1"),
                     labels=("User",),
                     properties={"name": "Ada"}
+                ),
+                Node(
+                    id=GraphID("user:2"),
+                    labels=("User",),
+                    properties={"name": "Bob"}
                 )
             ])
-            # Note: ctx removed to avoid version mismatch issue
         )
-        print(f"Upserted {result.upserted_count} nodes")
+        print(f"\n✅ Upsert Nodes:")
+        print(f"   Upserted: {result.upserted_count} nodes")
+        print(f"   Failed: {result.failed_count} nodes")
         
-        # Query the graph
+        # Test 3: Query the graph
         query_result = await adapter.query(
             GraphQuerySpec(
                 text="MATCH (u:User) RETURN u.name",
                 dialect="cypher"
             )
         )
-        print(f"Query results: {query_result.records}")
-        print(f"Summary: {query_result.summary}")
+        print(f"\n✅ Query:")
+        print(f"   Query: MATCH (u:User) RETURN u.name")
+        print(f"   Dialect: {query_result.dialect}")
+        print(f"   Records: {query_result.records}")
+        print(f"   Summary: {query_result.summary}")
+        
+        # Test 4: Check stored nodes
+        print(f"\n✅ Storage Check:")
+        print(f"   Total nodes in memory: {len(adapter.nodes)}")
+        for node_id, node in adapter.nodes.items():
+            print(f"   - {node_id}: labels={node.labels}, properties={node.properties}")
+        
+        # Test 5: Health check
+        health = await adapter.health()
+        print(f"\n✅ Health Check:")
+        print(f"   OK: {health.get('ok', False)}")
+        print(f"   Server: {health.get('server', 'unknown')} v{health.get('version', 'unknown')}")
+        
+        print("\n" + "=" * 80)
+        print("✅ All tests passed!")
+        print("=" * 80)
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 </details>
 
