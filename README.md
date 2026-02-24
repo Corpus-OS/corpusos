@@ -7,6 +7,8 @@
 ![Vector Protocol](https://img.shields.io/badge/Vector%20Protocol-100%25%20Conformant-brightgreen)
 ![Graph Protocol](https://img.shields.io/badge/Graph%20Protocol-100%25%20Conformant-brightgreen)
 ![Embedding Protocol](https://img.shields.io/badge/Embedding%20Protocol-100%25%20Conformant-brightgreen)
+[![Downloads](https://static.pepy.tech/badge/corpus-sdk)](https://pepy.tech/project/corpus-sdk)
+[![Downloads/Month](https://static.pepy.tech/badge/corpus-sdk/month)](https://pepy.tech/project/corpus-sdk)
 
 Reference implementation of the **Corpus OS Protocol and SDK** — a **wire-first, vendor-neutral** SDK for interoperable AI frameworks and data backends across four domains: **LLM**, **Embedding**, **Vector**, and **Graph**.
 
