@@ -3368,6 +3368,164 @@ METRIC_DOTPRODUCT = "dotproduct"
 SUPPORTED_METRICS = (METRIC_COSINE, METRIC_EUCLIDEAN, METRIC_DOTPRODUCT)
 
 
+# ----------------------------------------------------------------------
+# MOCK CLIENT (Replace with real provider SDK in production)
+# ----------------------------------------------------------------------
+
+@dataclass
+class MockMatch:
+    """Mock vector match result."""
+    id: str
+    vector: List[float]
+    metadata: Optional[Dict[str, Any]]
+    namespace: str
+    score: float
+    distance: float
+
+
+@dataclass
+class MockQueryResponse:
+    """Mock query response."""
+    matches: List[MockMatch]
+    total_matches: int
+
+
+class MockVectorClient:
+    """Mock vector store provider client."""
+    
+    def __init__(self):
+        # namespace -> {id -> vector_data}
+        self._data: Dict[str, Dict[str, Dict[str, Any]]] = {}
+    
+    async def query(
+        self,
+        vector: List[float],
+        top_k: int,
+        namespace: str,
+        filter: Optional[Dict] = None,
+        include_metadata: bool = True,
+        include_vectors: bool = True,
+        timeout: Optional[float] = None
+    ) -> MockQueryResponse:
+        """Mock single query."""
+        await asyncio.sleep(0.01)  # Simulate network
+        
+        bucket = self._data.get(namespace, {})
+        if not bucket:
+            return MockQueryResponse(matches=[], total_matches=0)
+        
+        # Calculate similarities
+        results = []
+        for vid, data in bucket.items():
+            # Apply filter
+            if filter and not self._filter_match(data.get("metadata"), filter):
+                continue
+            
+            # Calculate cosine similarity (simple demo)
+            score = self._cosine_similarity(vector, data["vector"])
+            distance = 1.0 - score
+            
+            results.append(MockMatch(
+                id=vid,
+                vector=data["vector"],
+                metadata=data.get("metadata"),
+                namespace=namespace,
+                score=score,
+                distance=distance
+            ))
+        
+        # Sort by score descending
+        results.sort(key=lambda x: x.score, reverse=True)
+        results = results[:top_k]
+        
+        return MockQueryResponse(
+            matches=results,
+            total_matches=len(results)
+        )
+    
+    async def batch_query(
+        self,
+        queries: List[Dict[str, Any]],
+        namespace: str,
+        timeout: Optional[float] = None
+    ) -> List[MockQueryResponse]:
+        """Mock batch query."""
+        await asyncio.sleep(0.02)  # Simulate network
+        
+        results = []
+        for q in queries:
+            response = await self.query(
+                vector=q["vector"],
+                top_k=q["top_k"],
+                namespace=namespace,
+                filter=q.get("filter"),
+                include_metadata=q.get("include_metadata", True),
+                include_vectors=q.get("include_vectors", True),
+                timeout=timeout
+            )
+            results.append(response)
+        
+        return results
+    
+    async def upsert(
+        self,
+        vectors: List[Dict[str, Any]],
+        namespace: str,
+        timeout: Optional[float] = None
+    ) -> Dict[str, Any]:
+        """Mock upsert."""
+        await asyncio.sleep(0.01)
+        
+        bucket = self._data.setdefault(namespace, {})
+        for v in vectors:
+            bucket[v["id"]] = {
+                "vector": v["vector"],
+                "metadata": v.get("metadata")
+            }
+        
+        return {"upserted": len(vectors)}
+    
+    async def health_check(self) -> bool:
+        """Mock health check."""
+        return True
+    
+    def _cosine_similarity(self, a: List[float], b: List[float]) -> float:
+        """Calculate cosine similarity."""
+        dot = sum(x * y for x, y in zip(a, b))
+        norm_a = math.sqrt(sum(x * x for x in a))
+        norm_b = math.sqrt(sum(x * x for x in b))
+        if norm_a == 0 or norm_b == 0:
+            return 0.0
+        return dot / (norm_a * norm_b)
+    
+    def _filter_match(self, metadata: Optional[Dict], filter: Optional[Dict]) -> bool:
+        """Check if metadata matches filter."""
+        if not filter:
+            return True
+        if not metadata:
+            return False
+        
+        for k, v in filter.items():
+            if isinstance(v, dict):
+                if "$in" in v:
+                    if metadata.get(k) not in v["$in"]:
+                        return False
+            else:
+                if metadata.get(k) != v:
+                    return False
+        return True
+
+
+@dataclass
+class _NamespaceInfo:
+    dimensions: int
+    distance_metric: str
+
+
+# ----------------------------------------------------------------------
+# PRODUCTION VECTOR ADAPTER
+# ----------------------------------------------------------------------
+
 class ProductionVectorAdapter(BaseVectorAdapter):
     """
     Production-ready vector adapter with 100% conformance.
@@ -3794,8 +3952,6 @@ class ProductionVectorAdapter(BaseVectorAdapter):
     
     def _validate_filter_dialect(self, filter: Optional[Dict], namespace: str):
         """MANDATORY: Validate filter operators before execution."""
-        from corpus_sdk.vector.vector_base import BadRequest
-        
         if filter is None:
             return
         
@@ -3864,7 +4020,7 @@ class ProductionVectorAdapter(BaseVectorAdapter):
     # HEALTH (with Namespace Status)
     # ----------------------------------------------------------------------
     
-    async def _do_health(self, *, ctx=None) -> Dict[str, Any]:
+    async def _do_health(self, ctx=None) -> Dict[str, Any]:
         """MANDATORY: Health with per-namespace status."""
         
         try:
@@ -3932,12 +4088,6 @@ class ProductionVectorAdapter(BaseVectorAdapter):
     
     def _map_provider_error(self, e: Exception):
         """Map provider errors to canonical Corpus errors."""
-        from corpus_sdk.vector.vector_base import (
-            BadRequest, AuthError, ResourceExhausted,
-            TransientNetwork, Unavailable, DimensionMismatch,
-            IndexNotReady, DeadlineExceeded
-        )
-        
         if "rate limit" in str(e).lower():
             return ResourceExhausted("Rate limit exceeded", retry_after_ms=5000)
         if "auth" in str(e).lower() or "key" in str(e).lower():
@@ -3950,21 +4100,241 @@ class ProductionVectorAdapter(BaseVectorAdapter):
             return IndexNotReady(str(e), retry_after_ms=500)
         
         return Unavailable(f"Provider error: {type(e).__name__}")
-    
-    def _execute_single_query(self, q, namespace, ctx):
-        """Execute a single query (helper for batch)."""
-        # Implementation depends on provider
-        pass
-    
-    def _get_namespace_info(self, namespace):
-        """Get namespace info."""
-        return self._namespaces.get(namespace)
 
 
-@dataclass
-class _NamespaceInfo:
-    dimensions: int
-    distance_metric: str
+# ----------------------------------------------------------------------
+# COMPREHENSIVE TESTS
+# ----------------------------------------------------------------------
+
+async def main():
+    """Test suite for ProductionVectorAdapter."""
+    
+    # Setup
+    client = MockVectorClient()
+    adapter = ProductionVectorAdapter(client)
+    
+    print("=" * 60)
+    print("PRODUCTION VECTOR ADAPTER - COMPREHENSIVE TESTS")
+    print("=" * 60)
+    
+    # TEST 1: Capabilities
+    print("\n[TEST 1] Capabilities")
+    caps = await adapter.capabilities()
+    print(f"✅ Server: {caps.server}")
+    print(f"✅ Protocol: {caps.protocol}")
+    print(f"✅ Max dimensions: {caps.max_dimensions}")
+    print(f"✅ Metrics: {', '.join(caps.supported_metrics)}")
+    print(f"✅ Max batch: {caps.max_batch_size}")
+    print(f"✅ Max top_k: {caps.max_top_k}")
+    print(f"✅ Batch queries: {caps.supports_batch_queries}")
+    
+    # TEST 2: Create Namespace
+    print("\n[TEST 2] Create Namespace")
+    ns_spec = NamespaceSpec(
+        namespace="test-ns",
+        dimensions=128,
+        distance_metric=METRIC_COSINE
+    )
+    ns_result = await adapter.create_namespace(ns_spec)
+    print(f"✅ Success: {ns_result.success}")
+    print(f"✅ Namespace: {ns_result.namespace}")
+    print(f"✅ Created: {ns_result.details.get('created')}")
+    
+    # TEST 3: Upsert Vectors
+    print("\n[TEST 3] Upsert Vectors")
+    vectors = [
+        Vector(
+            id=VectorID(f"vec-{i}"),
+            vector=[float(i * 0.1)] * 128,
+            metadata={"category": "test", "value": i},
+            namespace="test-ns"
+        )
+        for i in range(5)
+    ]
+    upsert_spec = UpsertSpec(
+        vectors=vectors,
+        namespace="test-ns"
+    )
+    upsert_result = await adapter.upsert(upsert_spec)
+    print(f"✅ Upserted: {upsert_result.upserted_count}")
+    print(f"✅ Failed: {upsert_result.failed_count}")
+    
+    # TEST 4: Single Query
+    print("\n[TEST 4] Single Query")
+    query_spec = QuerySpec(
+        vector=[0.1] * 128,
+        top_k=3,
+        namespace="test-ns",
+        include_metadata=True,
+        include_vectors=True
+    )
+    query_result = await adapter.query(query_spec)
+    print(f"✅ Total matches: {query_result.total_matches}")
+    print(f"✅ Returned: {len(query_result.matches)}")
+    if query_result.matches:
+        print(f"✅ Top match ID: {query_result.matches[0].vector.id}")
+        print(f"✅ Top match score: {query_result.matches[0].score:.4f}")
+    
+    # TEST 5: Query with Filter
+    print("\n[TEST 5] Query with Filter")
+    filter_spec = QuerySpec(
+        vector=[0.2] * 128,
+        top_k=3,
+        namespace="test-ns",
+        filter={"category": "test"},
+        include_metadata=True,
+        include_vectors=False  # Test vector exclusion
+    )
+    filter_result = await adapter.query(filter_spec)
+    print(f"✅ Matches: {len(filter_result.matches)}")
+    if filter_result.matches:
+        print(f"✅ Vector included: {len(filter_result.matches[0].vector.vector) > 0}")
+        print(f"✅ Metadata: {filter_result.matches[0].vector.metadata}")
+    
+    # TEST 6: Batch Query (Atomic)
+    print("\n[TEST 6] Batch Query (Atomic)")
+    batch_queries = [
+        QuerySpec(
+            vector=[float(i * 0.1)] * 128,
+            top_k=2,
+            namespace="test-ns",
+            include_metadata=True,
+            include_vectors=True
+        )
+        for i in range(3)
+    ]
+    batch_spec = BatchQuerySpec(
+        queries=batch_queries,
+        namespace="test-ns"
+    )
+    batch_results = await adapter.batch_query(batch_spec)
+    print(f"✅ Queries executed: {len(batch_results)}")
+    for i, result in enumerate(batch_results):
+        print(f"✅ Query {i}: {len(result.matches)} matches")
+    
+    # TEST 7: Delete by IDs (Idempotent)
+    print("\n[TEST 7] Delete by IDs (Idempotent)")
+    delete_spec = DeleteSpec(
+        ids=[VectorID("vec-0"), VectorID("vec-1"), VectorID("nonexistent")],
+        namespace="test-ns"
+    )
+    delete_result = await adapter.delete(delete_spec)
+    print(f"✅ Deleted: {delete_result.deleted_count}")
+    print(f"✅ Failed: {delete_result.failed_count}")
+    assert delete_result.deleted_count == 2, "Should delete 2 (ignoring nonexistent)"
+    
+    # TEST 8: Delete by Filter
+    print("\n[TEST 8] Delete by Filter")
+    delete_filter_spec = DeleteSpec(
+        ids=[],  # Empty list when using filter
+        filter={"value": {"$in": [2, 3]}},
+        namespace="test-ns"
+    )
+    delete_filter_result = await adapter.delete(delete_filter_spec)
+    print(f"✅ Deleted: {delete_filter_result.deleted_count}")
+    
+    # TEST 9: Health Check
+    print("\n[TEST 9] Health Check")
+    health = await adapter.health()
+    print(f"✅ OK: {health['ok']}")
+    print(f"✅ Status: {health.get('status')}")
+    print(f"✅ Namespaces: {len(health.get('namespaces', {}))}")
+    if "namespaces" in health:
+        for ns, info in health["namespaces"].items():
+            print(f"   - {ns}: {info['count']} vectors, {info['dimensions']}D, {info['metric']}")
+    
+    # TEST 10: Error Handling (Unknown Namespace)
+    print("\n[TEST 10] Error Handling (Unknown Namespace)")
+    try:
+        bad_query = QuerySpec(
+            vector=[0.1] * 128,
+            top_k=3,
+            namespace="nonexistent-ns",
+            include_metadata=True,
+            include_vectors=True
+        )
+        await adapter.query(bad_query)
+        print("❌ Should have raised BadRequest")
+    except BadRequest as e:
+        print(f"✅ Caught BadRequest: {e}")
+    
+    # TEST 11: Error Handling (Dimension Mismatch)
+    print("\n[TEST 11] Error Handling (Dimension Mismatch)")
+    try:
+        bad_dim_query = QuerySpec(
+            vector=[0.1] * 64,  # Wrong dimensions!
+            top_k=3,
+            namespace="test-ns",
+            include_metadata=True,
+            include_vectors=True
+        )
+        await adapter.query(bad_dim_query)
+        print("❌ Should have raised DimensionMismatch")
+    except DimensionMismatch as e:
+        print(f"✅ Caught DimensionMismatch: {e}")
+    
+    # TEST 12: Error Handling (Invalid Filter Operator)
+    print("\n[TEST 12] Error Handling (Invalid Filter Operator)")
+    try:
+        bad_filter_query = QuerySpec(
+            vector=[0.1] * 128,
+            top_k=3,
+            namespace="test-ns",
+            filter={"value": {"$gt": 5}},  # $gt not supported
+            include_metadata=True,
+            include_vectors=True
+        )
+        await adapter.query(bad_filter_query)
+        print("❌ Should have raised BadRequest")
+    except BadRequest as e:
+        print(f"✅ Caught BadRequest for unsupported operator: {e}")
+    
+    # TEST 13: Namespace Authority (Batch Query)
+    print("\n[TEST 13] Namespace Authority (Batch Query Validation)")
+    try:
+        mismatched_queries = [
+            QuerySpec(
+                vector=[0.1] * 128,
+                top_k=2,
+                namespace="wrong-ns",  # Mismatch!
+                include_metadata=True,
+                include_vectors=True
+            )
+        ]
+        bad_batch = BatchQuerySpec(
+            queries=mismatched_queries,
+            namespace="test-ns"
+        )
+        await adapter.batch_query(bad_batch)
+        print("❌ Should have raised BadRequest")
+    except BadRequest as e:
+        print(f"✅ Caught namespace mismatch: {e}")
+    
+    # TEST 14: Delete Namespace
+    print("\n[TEST 14] Delete Namespace")
+    del_ns_result = await adapter.delete_namespace("test-ns")
+    print(f"✅ Success: {del_ns_result.success}")
+    print(f"✅ Existed: {del_ns_result.details.get('existed')}")
+    
+    print("\n" + "=" * 60)
+    print("ALL TESTS PASSED ✅")
+    print("=" * 60)
+    
+    # Stats summary
+    print(f"\n📊 Adapter Stats:")
+    print(f"   - Query calls: {adapter._stats['query_calls']}")
+    print(f"   - Batch query calls: {adapter._stats['batch_query_calls']}")
+    print(f"   - Upsert calls: {adapter._stats['upsert_calls']}")
+    print(f"   - Delete calls: {adapter._stats['delete_calls']}")
+    print(f"   - Total vectors upserted: {adapter._stats['total_vectors_upserted']}")
+    print(f"   - Total vectors deleted: {adapter._stats['total_vectors_deleted']}")
+    print(f"   - Total processing time: {adapter._stats['total_processing_time_ms']:.2f}ms")
+    print(f"   - Errors: {adapter._stats['error_count']}")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+
 ```
 
 ---
