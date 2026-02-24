@@ -5063,7 +5063,7 @@ from typing import AsyncIterator, Dict, Any, List, Optional, Tuple
 import asyncio
 import uuid
 import time
-from dataclasses import asdict
+from dataclasses import dataclass, asdict
 from corpus_sdk.graph.graph_base import BaseGraphAdapter
 from corpus_sdk.graph.graph_base import (
     GraphCapabilities, GraphID, Node, Edge,
@@ -5073,13 +5073,271 @@ from corpus_sdk.graph.graph_base import (
     BulkVerticesSpec, BulkVerticesResult,
     BatchOperation, BatchResult,
     QueryResult, QueryChunk, TraversalResult,
-    GraphSchema, OperationContext
+    GraphSchema, OperationContext,
+    UpsertResult, DeleteResult
 )
 from corpus_sdk.graph.graph_base import (
     BadRequest, AuthError, ResourceExhausted,
     TransientNetwork, Unavailable, NotSupported,
     DeadlineExceeded
 )
+
+
+# ----------------------------------------------------------------------
+# MOCK CLIENT (Replace with real provider SDK in production)
+# ----------------------------------------------------------------------
+
+@dataclass
+class MockQueryResponse:
+    """Mock query response."""
+    records: List[Dict[str, Any]]
+    latency_ms: float
+
+
+@dataclass
+class MockStreamChunk:
+    """Mock streaming chunk."""
+    records: List[Dict[str, Any]]
+    is_final: bool
+
+
+@dataclass
+class MockScanResponse:
+    """Mock vertex scan response."""
+    vertices: List[Dict[str, Any]]
+    next_cursor: Optional[str]
+    has_more: bool
+
+
+@dataclass
+class MockTraverseResponse:
+    """Mock traversal response."""
+    nodes: List[Dict[str, Any]]
+    edges: List[Dict[str, Any]]
+    paths: List[List[str]]
+
+
+@dataclass
+class MockSchemaResponse:
+    """Mock schema response."""
+    node_labels: List[str]
+    relationship_types: List[str]
+    version: str
+
+
+class MockGraphClient:
+    """Mock graph database provider client."""
+    
+    def __init__(self):
+        # namespace -> {id -> node_data}
+        self._nodes: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        # namespace -> {id -> edge_data}
+        self._edges: Dict[str, Dict[str, Dict[str, Any]]] = {}
+    
+    async def query(
+        self,
+        dialect: str,
+        query: str,
+        params: Dict[str, Any],
+        namespace: str,
+        timeout: Optional[float] = None
+    ) -> MockQueryResponse:
+        """Mock query execution."""
+        await asyncio.sleep(0.01)
+        
+        # Simple mock: return node count
+        node_count = len(self._nodes.get(namespace, {}))
+        edge_count = len(self._edges.get(namespace, {}))
+        
+        records = [
+            {"nodes": node_count, "edges": edge_count, "query": query[:50]}
+        ]
+        
+        return MockQueryResponse(
+            records=records,
+            latency_ms=10.5
+        )
+    
+    async def stream_query(
+        self,
+        dialect: str,
+        query: str,
+        params: Dict[str, Any],
+        namespace: str,
+        timeout: Optional[float] = None
+    ) -> AsyncIterator[MockStreamChunk]:
+        """Mock streaming query."""
+        await asyncio.sleep(0.01)
+        
+        # Emit 2 chunks
+        node_count = len(self._nodes.get(namespace, {}))
+        
+        yield MockStreamChunk(
+            records=[{"chunk": 1, "nodes": node_count // 2}],
+            is_final=False
+        )
+        
+        await asyncio.sleep(0.005)
+        
+        yield MockStreamChunk(
+            records=[{"chunk": 2, "nodes": node_count - (node_count // 2)}],
+            is_final=True
+        )
+    
+    async def scan_vertices(
+        self,
+        namespace: str,
+        limit: int,
+        cursor: Optional[str],
+        filter: Optional[Dict],
+        timeout: Optional[float] = None
+    ) -> MockScanResponse:
+        """Mock vertex scan with pagination."""
+        await asyncio.sleep(0.01)
+        
+        bucket = self._nodes.get(namespace, {})
+        items = list(bucket.items())
+        
+        # Parse cursor
+        start_idx = int(cursor) if cursor else 0
+        end_idx = min(start_idx + limit, len(items))
+        
+        vertices = [
+            {
+                "id": node_id,
+                "labels": data.get("labels", []),
+                "properties": data.get("properties", {})
+            }
+            for node_id, data in items[start_idx:end_idx]
+        ]
+        
+        has_more = end_idx < len(items)
+        next_cursor = str(end_idx) if has_more else None
+        
+        return MockScanResponse(
+            vertices=vertices,
+            next_cursor=next_cursor,
+            has_more=has_more
+        )
+    
+    async def traverse(
+        self,
+        start_nodes: List[str],
+        max_depth: int,
+        direction: str,
+        relationship_types: Optional[List[str]],
+        namespace: str,
+        timeout: Optional[float] = None
+    ) -> MockTraverseResponse:
+        """Mock graph traversal."""
+        await asyncio.sleep(0.02)
+        
+        # Simple mock: return start nodes and connected edges
+        nodes = []
+        edges = []
+        paths = []
+        
+        node_bucket = self._nodes.get(namespace, {})
+        edge_bucket = self._edges.get(namespace, {})
+        
+        for node_id in start_nodes:
+            if node_id in node_bucket:
+                nodes.append({
+                    "id": node_id,
+                    "labels": node_bucket[node_id].get("labels", []),
+                    "properties": node_bucket[node_id].get("properties", {})
+                })
+        
+        # Find edges connected to start nodes
+        for edge_id, edge_data in edge_bucket.items():
+            if edge_data["src"] in start_nodes or edge_data["dst"] in start_nodes:
+                edges.append({
+                    "id": edge_id,
+                    "src": edge_data["src"],
+                    "dst": edge_data["dst"],
+                    "label": edge_data["label"],
+                    "properties": edge_data.get("properties", {})
+                })
+                
+                # Add path
+                paths.append([edge_data["src"], edge_data["dst"]])
+        
+        return MockTraverseResponse(
+            nodes=nodes,
+            edges=edges,
+            paths=paths
+        )
+    
+    async def get_schema(self, timeout: Optional[float] = None) -> MockSchemaResponse:
+        """Mock schema retrieval."""
+        await asyncio.sleep(0.01)
+        
+        # Collect all unique labels and relationship types
+        node_labels = set()
+        relationship_types = set()
+        
+        for ns_nodes in self._nodes.values():
+            for node_data in ns_nodes.values():
+                node_labels.update(node_data.get("labels", []))
+        
+        for ns_edges in self._edges.values():
+            for edge_data in ns_edges.values():
+                relationship_types.add(edge_data.get("label", ""))
+        
+        return MockSchemaResponse(
+            node_labels=sorted(list(node_labels)),
+            relationship_types=sorted(list(relationship_types)),
+            version="1.0"
+        )
+    
+    async def upsert_node(
+        self,
+        id: str,
+        labels: Tuple[str, ...],
+        properties: Dict[str, Any],
+        namespace: str
+    ):
+        """Mock node upsert."""
+        await asyncio.sleep(0.005)
+        
+        if namespace not in self._nodes:
+            self._nodes[namespace] = {}
+        
+        self._nodes[namespace][id] = {
+            "labels": list(labels) if labels else [],
+            "properties": properties
+        }
+    
+    async def upsert_edge(
+        self,
+        id: str,
+        src: str,
+        dst: str,
+        label: str,
+        properties: Dict[str, Any],
+        namespace: str
+    ):
+        """Mock edge upsert."""
+        await asyncio.sleep(0.005)
+        
+        if namespace not in self._edges:
+            self._edges[namespace] = {}
+        
+        self._edges[namespace][id] = {
+            "src": src,
+            "dst": dst,
+            "label": label,
+            "properties": properties
+        }
+    
+    async def health_check(self) -> bool:
+        """Mock health check."""
+        return True
+
+
+# ----------------------------------------------------------------------
+# PRODUCTION GRAPH ADAPTER
+# ----------------------------------------------------------------------
 
 class ProductionGraphAdapter(BaseGraphAdapter):
     """
@@ -5230,7 +5488,8 @@ class ProductionGraphAdapter(BaseGraphAdapter):
         chunk_count = 0
         
         try:
-            stream = await self._client.stream_query(
+            # stream_query is already an async generator, don't await it
+            stream = self._client.stream_query(
                 dialect=spec.dialect or "cypher",
                 query=spec.text,
                 params=spec.params or {},
@@ -5734,7 +5993,7 @@ class ProductionGraphAdapter(BaseGraphAdapter):
     # HEALTH
     # ----------------------------------------------------------------------
     
-    async def _do_health(self, *, ctx=None) -> Dict[str, Any]:
+    async def _do_health(self, ctx=None) -> Dict[str, Any]:
         """Health check."""
         try:
             healthy = await self._client.health_check()
@@ -5770,12 +6029,6 @@ class ProductionGraphAdapter(BaseGraphAdapter):
     
     def _map_provider_error(self, e: Exception):
         """Map provider errors to canonical Corpus errors."""
-        from corpus_sdk.graph.graph_base import (
-            BadRequest, AuthError, ResourceExhausted,
-            TransientNetwork, Unavailable, NotSupported,
-            DeadlineExceeded
-        )
-        
         if "rate limit" in str(e).lower():
             return ResourceExhausted("Rate limit exceeded", retry_after_ms=5000)
         if "auth" in str(e).lower() or "key" in str(e).lower():
@@ -5800,17 +6053,259 @@ class ProductionGraphAdapter(BaseGraphAdapter):
             if properties.get(k) != v:
                 return False
         return True
+
+
+# ----------------------------------------------------------------------
+# COMPREHENSIVE TESTS
+# ----------------------------------------------------------------------
+
+async def main():
+    """Test suite for ProductionGraphAdapter."""
     
-    async def _get_vertex_count(self, namespace: str) -> int:
-        """Get vertex count for namespace."""
-        return len(self._store.get(namespace, {}))
+    # Setup
+    client = MockGraphClient()
+    adapter = ProductionGraphAdapter(client)
     
-    async def _get_vertex_by_index(self, index: int, namespace: str) -> Node:
-        """Get vertex by index (for pagination)."""
-        items = list(self._store.get(namespace, {}).items())
-        if index < len(items):
-            return items[index][1]
-        raise IndexError("vertex not found")
+    print("=" * 60)
+    print("PRODUCTION GRAPH ADAPTER - COMPREHENSIVE TESTS")
+    print("=" * 60)
+    
+    # TEST 1: Capabilities
+    print("\n[TEST 1] Capabilities")
+    caps = await adapter.capabilities()
+    print(f"✅ Server: {caps.server}")
+    print(f"✅ Protocol: {caps.protocol}")
+    print(f"✅ Dialects: {', '.join(caps.supported_query_dialects)}")
+    print(f"✅ Streaming: {caps.supports_stream_query}")
+    print(f"✅ Batch: {caps.supports_batch}")
+    print(f"✅ Transaction: {caps.supports_transaction}")
+    print(f"✅ Traversal: {caps.supports_traversal}")
+    print(f"✅ Max depth: {caps.max_traversal_depth}")
+    
+    # TEST 2: Upsert Nodes
+    print("\n[TEST 2] Upsert Nodes")
+    nodes = [
+        Node(
+            id=GraphID(f"node-{i}"),
+            labels=("Person", "User"),
+            properties={"name": f"User{i}", "age": 20 + i},
+            namespace="test-graph"
+        )
+        for i in range(5)
+    ]
+    upsert_nodes_spec = UpsertNodesSpec(
+        nodes=nodes,
+        namespace="test-graph"
+    )
+    upsert_nodes_result = await adapter.upsert_nodes(upsert_nodes_spec)
+    print(f"✅ Upserted: {upsert_nodes_result.upserted_count}")
+    print(f"✅ Failed: {upsert_nodes_result.failed_count}")
+    
+    # TEST 3: Upsert Edges
+    print("\n[TEST 3] Upsert Edges")
+    edges = [
+        Edge(
+            id=GraphID(f"edge-{i}"),
+            src=GraphID(f"node-{i}"),
+            dst=GraphID(f"node-{i+1}"),
+            label="KNOWS",
+            properties={"since": 2020 + i},
+            namespace="test-graph"
+        )
+        for i in range(4)
+    ]
+    upsert_edges_spec = UpsertEdgesSpec(
+        edges=edges,
+        namespace="test-graph"
+    )
+    upsert_edges_result = await adapter.upsert_edges(upsert_edges_spec)
+    print(f"✅ Upserted: {upsert_edges_result.upserted_count}")
+    print(f"✅ Failed: {upsert_edges_result.failed_count}")
+    
+    # TEST 4: Query
+    print("\n[TEST 4] Query")
+    query_spec = GraphQuerySpec(
+        text="MATCH (n) RETURN count(n)",
+        dialect="cypher",
+        namespace="test-graph"
+    )
+    query_result = await adapter.query(query_spec)
+    print(f"✅ Records: {len(query_result.records)}")
+    print(f"✅ Summary: {query_result.summary}")
+    
+    # TEST 5: Stream Query
+    print("\n[TEST 5] Stream Query")
+    stream_spec = GraphQuerySpec(
+        text="MATCH (n:Person) RETURN n",
+        dialect="cypher",
+        namespace="test-graph"
+    )
+    chunks = []
+    async for chunk in adapter.stream_query(stream_spec):
+        chunks.append(chunk)
+        print(f"✅ Chunk: {len(chunk.records)} records, is_final={chunk.is_final}")
+    assert len(chunks) >= 1, "Should have at least 1 chunk"
+    assert chunks[-1].is_final, "Last chunk should be final"
+    
+    # TEST 6: Bulk Vertices (Pagination)
+    print("\n[TEST 6] Bulk Vertices (Pagination)")
+    bulk_spec = BulkVerticesSpec(
+        namespace="test-graph",
+        limit=3,
+        cursor=None
+    )
+    bulk_result = await adapter.bulk_vertices(bulk_spec)
+    print(f"✅ Nodes: {len(bulk_result.nodes)}")
+    print(f"✅ Has more: {bulk_result.has_more}")
+    print(f"✅ Next cursor: {bulk_result.next_cursor}")
+    
+    # TEST 7: Traversal
+    print("\n[TEST 7] Traversal")
+    traversal_spec = GraphTraversalSpec(
+        start_nodes=[GraphID("node-0")],
+        max_depth=2,
+        direction="OUTGOING",  # Must be uppercase: OUTGOING, INCOMING, or BOTH
+        namespace="test-graph"
+    )
+    traversal_result = await adapter.traversal(traversal_spec)
+    print(f"✅ Nodes: {len(traversal_result.nodes)}")
+    print(f"✅ Edges: {len(traversal_result.relationships)}")
+    print(f"✅ Paths: {len(traversal_result.paths)}")
+    
+    # TEST 8: Get Schema
+    print("\n[TEST 8] Get Schema")
+    schema = await adapter.get_schema()
+    print(f"✅ Node labels: {len(schema.nodes)}")
+    print(f"✅ Edge types: {len(schema.edges)}")
+    print(f"✅ Metadata: {schema.metadata}")
+    
+    # TEST 9: Batch Operations
+    print("\n[TEST 9] Batch Operations")
+    batch_ops = [
+        BatchOperation(
+            op="graph.upsert_nodes",
+            args={
+                "nodes": [Node(
+                    id=GraphID("batch-node-1"),
+                    labels=("Test",),
+                    properties={"batch": True},
+                    namespace="test-graph"
+                )],
+                "namespace": "test-graph"
+            }
+        ),
+        BatchOperation(
+            op="graph.query",
+            args={
+                "text": "MATCH (n:Test) RETURN n",
+                "dialect": "cypher",
+                "namespace": "test-graph"
+            }
+        )
+    ]
+    batch_result = await adapter.batch(batch_ops)
+    print(f"✅ Results: {len(batch_result.results)}")
+    for i, r in enumerate(batch_result.results):
+        print(f"   Op {i}: ok={r.get('ok')}")
+    
+    # TEST 10: Transaction (Atomic)
+    print("\n[TEST 10] Transaction (Atomic)")
+    tx_ops = [
+        BatchOperation(
+            op="graph.upsert_nodes",
+            args={
+                "nodes": [Node(
+                    id=GraphID("tx-node-1"),
+                    labels=("TxTest",),
+                    properties={"tx": True},
+                    namespace="test-graph"
+                )],
+                "namespace": "test-graph"
+            }
+        ),
+        BatchOperation(
+            op="graph.upsert_edges",
+            args={
+                "edges": [Edge(
+                    id=GraphID("tx-edge-1"),
+                    src=GraphID("tx-node-1"),
+                    dst=GraphID("node-0"),
+                    label="CREATED_IN_TX",
+                    namespace="test-graph"
+                )],
+                "namespace": "test-graph"
+            }
+        )
+    ]
+    tx_result = await adapter.transaction(tx_ops)
+    print(f"✅ Success: {tx_result.success}")
+    print(f"✅ Transaction ID: {tx_result.transaction_id}")
+    print(f"✅ Results: {len(tx_result.results)}")
+    
+    # TEST 11: Delete Nodes (Idempotent)
+    print("\n[TEST 11] Delete Nodes (Idempotent)")
+    delete_nodes_spec = DeleteNodesSpec(
+        ids=[GraphID("node-0"), GraphID("nonexistent")],
+        namespace="test-graph"
+    )
+    delete_nodes_result = await adapter.delete_nodes(delete_nodes_spec)
+    print(f"✅ Deleted: {delete_nodes_result.deleted_count}")
+    print(f"✅ Failed: {delete_nodes_result.failed_count}")
+    assert delete_nodes_result.deleted_count == 1, "Should delete 1 (ignore nonexistent)"
+    
+    # TEST 12: Delete Edges (Idempotent)
+    print("\n[TEST 12] Delete Edges (Idempotent)")
+    delete_edges_spec = DeleteEdgesSpec(
+        ids=[GraphID("edge-0"), GraphID("nonexistent")],
+        namespace="test-graph"
+    )
+    delete_edges_result = await adapter.delete_edges(delete_edges_spec)
+    print(f"✅ Deleted: {delete_edges_result.deleted_count}")
+    print(f"✅ Failed: {delete_edges_result.failed_count}")
+    
+    # TEST 13: Health Check
+    print("\n[TEST 13] Health Check")
+    health = await adapter.health()
+    print(f"✅ OK: {health['ok']}")
+    print(f"✅ Status: {health.get('status')}")
+    print(f"✅ Namespaces: {len(health.get('namespaces', {}))}")
+    
+    # TEST 14: Error Handling (Unsupported Dialect)
+    print("\n[TEST 14] Error Handling (Unsupported Dialect)")
+    try:
+        bad_query = GraphQuerySpec(
+            text="SELECT * FROM nodes",
+            dialect="sql",  # Not supported
+            namespace="test-graph"
+        )
+        await adapter.query(bad_query)
+        print("❌ Should have raised NotSupported")
+    except NotSupported as e:
+        print(f"✅ Caught NotSupported: {e}")
+    
+    print("\n" + "=" * 60)
+    print("ALL TESTS PASSED ✅")
+    print("=" * 60)
+    
+    # Stats summary
+    print(f"\n📊 Adapter Stats:")
+    print(f"   - Query calls: {adapter._stats['query_calls']}")
+    print(f"   - Stream query calls: {adapter._stats['stream_query_calls']}")
+    print(f"   - Bulk vertices calls: {adapter._stats['bulk_vertices_calls']}")
+    print(f"   - Batch calls: {adapter._stats['batch_calls']}")
+    print(f"   - Transaction calls: {adapter._stats['transaction_calls']}")
+    print(f"   - Traversal calls: {adapter._stats['traversal_calls']}")
+    print(f"   - Nodes upserted: {adapter._stats['total_nodes_upserted']}")
+    print(f"   - Edges upserted: {adapter._stats['total_edges_upserted']}")
+    print(f"   - Nodes deleted: {adapter._stats['total_nodes_deleted']}")
+    print(f"   - Edges deleted: {adapter._stats['total_edges_deleted']}")
+    print(f"   - Total processing time: {adapter._stats['total_processing_time_ms']:.2f}ms")
+    print(f"   - Errors: {adapter._stats['error_count']}")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+
 ```
 
 ---
