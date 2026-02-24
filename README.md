@@ -130,18 +130,46 @@ Python ≥ 3.10 recommended. No heavy runtime dependencies.
 ## ⚡ Quick Start
 
 ```python
-from corpus_sdk.llm.llm_base import BaseLLMAdapter, OperationContext
+import asyncio
+from corpus_sdk.llm.llm_base import (
+    BaseLLMAdapter, OperationContext, LLMCompletion,
+    LLMCapabilities, TokenUsage
+)
 
 class QuickAdapter(BaseLLMAdapter):
-    async def _do_complete(self, messages, **kwargs):
-        return {"text": "Hello from CORPUS!", "model": "quick-demo"}
+    async def _do_capabilities(self) -> LLMCapabilities:
+        return LLMCapabilities(
+            server="quick-demo",
+            version="1.0.0",
+            model_family="demo",
+            max_context_length=4096,
+        )
+    
+    async def _do_complete(self, messages, model=None, **kwargs) -> LLMCompletion:
+        return LLMCompletion(
+            text="Hello from CORPUS!",
+            model=model or "quick-demo",
+            model_family="demo",
+            usage=TokenUsage(prompt_tokens=2, completion_tokens=3, total_tokens=5),
+            finish_reason="stop",
+        )
+    
+    async def _do_count_tokens(self, text, *, model=None, ctx=None) -> int:
+        return len(text.split())  # Simple word count
+    
+    async def _do_health(self, *, ctx=None) -> dict:
+        return {"ok": True, "server": "quick-demo"}
 
-adapter = QuickAdapter()
-ctx = OperationContext(request_id="test-123")
-result = await adapter.complete(
-    messages=[{"role": "user", "content": "Hi"}], ctx=ctx
-)
-print(result.text)  # "Hello from CORPUS!"
+# Usage
+async def main():
+    adapter = QuickAdapter()
+    ctx = OperationContext(request_id="test-123")
+    result = await adapter.complete(
+        messages=[{"role": "user", "content": "Hi"}], ctx=ctx
+    )
+    print(result.text)  # "Hello from CORPUS!"
+
+asyncio.run(main())
 ```
 
 A complete quick start with all four protocols is in [`docs/guides/QUICK_START.md`](docs/guides/QUICK_START.md).
