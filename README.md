@@ -359,41 +359,81 @@ asyncio.run(main())
 <summary><strong>Graph</strong></summary>
 
 ```python
+import asyncio
 from corpus_sdk.graph.graph_base import (
     BaseGraphAdapter, GraphCapabilities, UpsertNodesSpec,
-    Node, GraphID, OperationContext, GraphQuerySpec, GraphQueryResult
+    Node, GraphID, OperationContext, GraphQuerySpec, QueryResult
 )
 
-class ExampleGraphAdapter(BaseGraphAdapter):
+class QuickGraphAdapter(BaseGraphAdapter):
+    def __init__(self):
+        super().__init__()
+        # Simple in-memory storage
+        self.nodes = {}
+    
     async def _do_capabilities(self) -> GraphCapabilities:
         return GraphCapabilities(
-            server="example-graph", version="1.0.0",
+            server="quick-graph",
+            version="1.0.0",
             supported_query_dialects=("cypher",),
-            supports_stream_query=True, supports_bulk_vertices=True,
-            supports_batch=True, supports_schema=True,
+            supports_stream_query=True,
+            supports_bulk_vertices=True,
+            supports_batch=True,
+            supports_schema=True,
         )
 
-    async def _do_query(self, spec: GraphQuerySpec, *, ctx=None) -> GraphQueryResult:
-        return GraphQueryResult(
+    async def _do_upsert_nodes(self, spec: UpsertNodesSpec, *, ctx=None):
+        # Store nodes in memory
+        for node in spec.nodes:
+            self.nodes[str(node.id)] = node
+        
+        from corpus_sdk.graph.graph_base import UpsertResult
+        return UpsertResult(
+            upserted_count=len(spec.nodes),
+            failed_count=0,
+            failures=[]
+        )
+
+    async def _do_query(self, spec: GraphQuerySpec, *, ctx=None) -> QueryResult:
+        return QueryResult(
             records=[{"id": 1, "name": "Ada"}],
-            summary={"rows": 1}, dialect=spec.dialect,
-            namespace=spec.namespace,
+            summary={"rows": 1},
+            dialect=spec.dialect,
+            namespace=spec.namespace or "default",
         )
 
     async def _do_health(self, *, ctx=None) -> dict:
-        return {"ok": True, "server": "example-graph", "version": "1.0.0"}
+        return {"ok": True, "server": "quick-graph", "version": "1.0.0"}
 
 # Usage
-async with ExampleGraphAdapter() as adapter:
-    ctx = OperationContext(request_id="req-4", tenant="acme")
-    result = await adapter.upsert_nodes(
-        UpsertNodesSpec(nodes=[
-            Node(id=GraphID("user:1"), labels=("User",),
-                 properties={"name": "Ada"})
-        ]),
-        ctx=ctx,
-    )
-    print(f"Upserted {result.upserted_count} nodes")
+async def main():
+    async with QuickGraphAdapter() as adapter:
+        ctx = OperationContext(request_id="req-4", tenant="acme")
+        
+        # Upsert nodes
+        result = await adapter.upsert_nodes(
+            UpsertNodesSpec(nodes=[
+                Node(
+                    id=GraphID("user:1"),
+                    labels=("User",),
+                    properties={"name": "Ada"}
+                )
+            ])
+            # Note: ctx removed to avoid version mismatch issue
+        )
+        print(f"Upserted {result.upserted_count} nodes")
+        
+        # Query the graph
+        query_result = await adapter.query(
+            GraphQuerySpec(
+                text="MATCH (u:User) RETURN u.name",
+                dialect="cypher"
+            )
+        )
+        print(f"Query results: {query_result.records}")
+        print(f"Summary: {query_result.summary}")
+
+asyncio.run(main())
 ```
 </details>
 
