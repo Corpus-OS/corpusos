@@ -501,7 +501,7 @@ Community questions: [GitHub Discussions](https://github.com/corpus/corpus-sdk/d
 | Production with official adapters | `corpus_sdk` + Official Adapters | **Commercial** |
 | Enterprise multi-provider | `corpus_sdk` + CORPUS Router (Managed or On-Prem) | **Commercial** |
 
-**Contact:** [sales@corpusos.com](mailto:sales@corpusos.com) · [partners@corpusos.com](mailto:partners@corpusos.com)
+**Contact:** [team@corpusos.com](mailto:team@corpusos.com) 
 
 ---
 
