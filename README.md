@@ -303,7 +303,7 @@ asyncio.run(main())
 ```python
 import asyncio
 from corpus_sdk.vector.vector_base import (
-    BaseVectorAdapter, VectorCapabilities, QuerySpec,
+    BaseVectorAdapter, VectorCapabilities, QuerySpec, UpsertSpec, UpsertResult,
     QueryResult, Vector, VectorMatch, OperationContext, VectorID
 )
 
@@ -320,36 +320,77 @@ class QuickVectorAdapter(BaseVectorAdapter):
             max_dimensions=3
         )
 
-    async def _do_query(self, spec: QuerySpec, *, ctx=None) -> QueryResult:
-        # Return a simple hardcoded match
-        v = Vector(
-            id=VectorID("v1"),
-            vector=[0.1, 0.2, 0.3],
-            metadata={"label": "demo"},
-            namespace=spec.namespace or "default"
+    async def _do_upsert(self, spec: UpsertSpec, *, ctx=None) -> UpsertResult:
+        """Store vectors in memory"""
+        ns = spec.namespace or "default"
+        if ns not in self.vectors:
+            self.vectors[ns] = []
+        self.vectors[ns].extend(spec.vectors)
+        
+        return UpsertResult(
+            upserted_count=len(spec.vectors),
+            failed_count=0,
+            failures=[]
         )
+
+    async def _do_query(self, spec: QuerySpec, *, ctx=None) -> QueryResult:
+        """Search for similar vectors"""
+        ns = spec.namespace or "default"
+        stored_vectors = self.vectors.get(ns, [])
+        
+        # Simple cosine similarity
+        def cosine_sim(a, b):
+            dot = sum(x * y for x, y in zip(a, b))
+            mag_a = sum(x * x for x in a) ** 0.5
+            mag_b = sum(x * x for x in b) ** 0.5
+            return dot / (mag_a * mag_b) if mag_a and mag_b else 0
+        
+        matches = []
+        for vec in stored_vectors:
+            score = cosine_sim(spec.vector, vec.vector)
+            matches.append(VectorMatch(vector=vec, score=score, distance=1-score))
+        
+        # Sort by score descending
+        matches.sort(key=lambda m: m.score, reverse=True)
+        top_matches = matches[:spec.top_k] if spec.top_k else matches
+        
         return QueryResult(
-            matches=[VectorMatch(vector=v, score=0.99, distance=0.01)],
+            matches=top_matches,
             query_vector=spec.vector,
-            namespace=spec.namespace or "default",
-            total_matches=1,
+            namespace=ns,
+            total_matches=len(top_matches),
         )
 
     async def _do_health(self, *, ctx=None) -> dict:
         return {"ok": True, "server": "quick-vector", "version": "1.0.0"}
 
-# Usage
+# Usage - Complete flow
 async def main():
     adapter = QuickVectorAdapter()
     ctx = OperationContext(request_id="req-3", tenant="acme")
-    result = await adapter.query(
-        QuerySpec(vector=[0.1, 0.2, 0.3], top_k=1),
+    
+    # 1. Add vectors to the store
+    vectors_to_add = [
+        Vector(id=VectorID("v1"), vector=[0.1, 0.2, 0.3], metadata={"label": "first"}),
+        Vector(id=VectorID("v2"), vector=[0.4, 0.5, 0.6], metadata={"label": "second"}),
+        Vector(id=VectorID("v3"), vector=[0.7, 0.8, 0.9], metadata={"label": "third"}),
+    ]
+    
+    upsert_result = await adapter.upsert(
+        UpsertSpec(vectors=vectors_to_add),
         ctx=ctx
     )
-    print(f"Query vector: {result.query_vector}")
-    print(f"Top match score: {result.matches[0].score}")
-    print(f"Match ID: {result.matches[0].vector.id}")
-    print(f"Match metadata: {result.matches[0].vector.metadata}")
+    print(f"✅ Upserted {upsert_result.upserted_count} vectors")
+    
+    # 2. Query for similar vectors
+    query_result = await adapter.query(
+        QuerySpec(vector=[0.1, 0.2, 0.3], top_k=2),
+        ctx=ctx
+    )
+    print(f"\n🔍 Query vector: {query_result.query_vector}")
+    print(f"Found {len(query_result.matches)} matches:")
+    for i, match in enumerate(query_result.matches, 1):
+        print(f"  {i}. ID: {match.vector.id}, Score: {match.score:.3f}, Metadata: {match.vector.metadata}")
 
 asyncio.run(main())
 ```
