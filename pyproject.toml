@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "corpus_sdk"
-version = "0.1.0"
+version = "1.0.0"
 description = "Protocol-first, vendor-neutral SDK for LLM, Embedding, Vector, and Graph backends."
 readme = "README.md"
 license = { text = "Apache-2.0" }
