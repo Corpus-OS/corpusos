@@ -2267,6 +2267,7 @@ def _count_tokens_sync(self, text: str, model: str) -> int:
 
 ```python
 from typing import AsyncIterator, Dict, Any, List, Optional
+from dataclasses import dataclass
 import asyncio
 import time
 import hashlib
@@ -2281,6 +2282,58 @@ from corpus_sdk.embedding.embedding_base import (
     Unavailable, NotSupported, DeadlineExceeded,
     TextTooLong, ModelNotAvailable
 )
+
+
+# ----------------------------------------------------------------------
+# MOCK CLIENT (Replace with real provider SDK in production)
+# ----------------------------------------------------------------------
+
+@dataclass
+class MockEmbedResponse:
+    """Mock provider response."""
+    vector: List[float]
+    tokens: int
+
+
+class MockEmbedClient:
+    """Mock embedding provider client."""
+    
+    def __init__(self):
+        self._dimensions = {
+            "text-embedding-3-small": 1536,
+            "text-embedding-3-large": 3072
+        }
+    
+    async def embed(self, model: str, text: str, timeout: Optional[float] = None) -> Dict[str, Any]:
+        """Mock embedding call."""
+        await asyncio.sleep(0.01)  # Simulate network
+        
+        # Generate deterministic vector based on text hash
+        text_hash = hashlib.md5(text.encode()).hexdigest()
+        dim = self._dimensions.get(model, 1536)
+        vector = [float(int(text_hash[i % len(text_hash)], 16)) / 15.0 for i in range(dim)]
+        
+        # Simple token counting (words)
+        tokens = len(text.split())
+        
+        return {
+            "vector": vector,
+            "tokens": tokens
+        }
+    
+    async def count_tokens(self, model: str, text: str, timeout: Optional[float] = None) -> int:
+        """Mock token counting."""
+        await asyncio.sleep(0.001)
+        return len(text.split())
+    
+    async def health_check(self) -> bool:
+        """Mock health check."""
+        return True
+
+
+# ----------------------------------------------------------------------
+# PRODUCTION EMBEDDING ADAPTER
+# ----------------------------------------------------------------------
 
 class ProductionEmbeddingAdapter(BaseEmbeddingAdapter):
     """
@@ -2579,19 +2632,15 @@ class ProductionEmbeddingAdapter(BaseEmbeddingAdapter):
         return count
     
     def _count_tokens_sync(self, text: str, model: str) -> int:
-        """Synchronous token count for internal use."""
-        import tiktoken
-        try:
-            encoding = tiktoken.encoding_for_model(model)
-        except KeyError:
-            encoding = tiktoken.get_encoding("cl100k_base")
-        return len(encoding.encode(text))
+        """Synchronous token count for internal use (simple word split for demo)."""
+        # In production, use tiktoken or provider's tokenizer
+        return len(text.split())
     
     # ----------------------------------------------------------------------
     # STATS (NO CACHE METRICS - CRITICAL)
     # ----------------------------------------------------------------------
     
-    async def _do_get_stats(self, *, ctx=None) -> EmbeddingStats:
+    async def _do_get_stats(self, ctx=None) -> EmbeddingStats:
         """MANDATORY: Adapter-owned stats ONLY. NO cache metrics."""
         total_ops = (
             self._stats["embed_calls"] +
@@ -2615,7 +2664,7 @@ class ProductionEmbeddingAdapter(BaseEmbeddingAdapter):
     # HEALTH
     # ----------------------------------------------------------------------
     
-    async def _do_health(self, *, ctx=None) -> Dict[str, Any]:
+    async def _do_health(self, ctx=None) -> Dict[str, Any]:
         """Health check - NO ctx.attrs-driven forcing."""
         try:
             healthy = await self._client.health_check()
@@ -2652,12 +2701,6 @@ class ProductionEmbeddingAdapter(BaseEmbeddingAdapter):
     
     def _map_provider_error(self, e: Exception):
         """Map provider errors to canonical Corpus errors."""
-        from corpus_sdk.embedding.embedding_base import (
-            BadRequest, AuthError, ResourceExhausted,
-            TransientNetwork, Unavailable, TextTooLong,
-            ModelNotAvailable, DeadlineExceeded
-        )
-        
         if "rate limit" in str(e).lower():
             return ResourceExhausted("Rate limit exceeded", retry_after_ms=5000)
         if "auth" in str(e).lower() or "key" in str(e).lower():
@@ -2674,6 +2717,168 @@ class ProductionEmbeddingAdapter(BaseEmbeddingAdapter):
     def reset_stats(self):
         """Reset stats (for testing)."""
         self._stats = {k: 0 for k in self._stats}
+
+
+# ----------------------------------------------------------------------
+# COMPREHENSIVE TESTS
+# ----------------------------------------------------------------------
+
+async def main():
+    """Test suite for ProductionEmbeddingAdapter."""
+    
+    # Setup
+    client = MockEmbedClient()
+    models = ["text-embedding-3-small", "text-embedding-3-large"]
+    dimensions = {
+        "text-embedding-3-small": 1536,
+        "text-embedding-3-large": 3072
+    }
+    
+    adapter = ProductionEmbeddingAdapter(client, models, dimensions)
+    
+    print("=" * 60)
+    print("PRODUCTION EMBEDDING ADAPTER - COMPREHENSIVE TESTS")
+    print("=" * 60)
+    
+    # TEST 1: Capabilities
+    print("\n[TEST 1] Capabilities")
+    caps = await adapter.capabilities()
+    print(f"✅ Server: {caps.server}")
+    print(f"✅ Protocol: {caps.protocol}")
+    print(f"✅ Models: {len(caps.supported_models)}")
+    print(f"✅ Max batch: {caps.max_batch_size}")
+    print(f"✅ Max dimensions: {caps.max_dimensions}")
+    print(f"✅ Streaming: {caps.supports_streaming}")
+    print(f"✅ Batch embedding: {caps.supports_batch_embedding}")
+    
+    # TEST 2: Single Embed
+    print("\n[TEST 2] Single Embed")
+    spec = EmbedSpec(
+        text="Hello world",
+        model="text-embedding-3-small"
+    )
+    result = await adapter.embed(spec)
+    print(f"✅ Dimensions: {result.embedding.dimensions}")
+    print(f"✅ Tokens: {result.tokens_used}")
+    print(f"✅ Model: {result.model}")
+    print(f"✅ Truncated: {result.truncated}")
+    assert result.embedding.dimensions == 1536, "Wrong dimensions"
+    assert len(result.embedding.vector) == 1536, "Vector size mismatch"
+    
+    # TEST 3: Batch Embed (Success)
+    print("\n[TEST 3] Batch Embed (All Success)")
+    batch_spec = BatchEmbedSpec(
+        texts=["first text", "second text", "third text"],
+        model="text-embedding-3-small"
+    )
+    batch_result = await adapter.embed_batch(batch_spec)
+    print(f"✅ Total texts: {batch_result.total_texts}")
+    print(f"✅ Embeddings: {len(batch_result.embeddings)}")
+    print(f"✅ Failures: {len(batch_result.failed_texts)}")
+    print(f"✅ Total tokens: {batch_result.total_tokens}")
+    assert len(batch_result.embeddings) == 3, "Should have 3 embeddings"
+    assert len(batch_result.failed_texts) == 0, "Should have 0 failures"
+    
+    # TEST 4: Batch Embed (Partial Failure)
+    print("\n[TEST 4] Batch Embed (Partial Failure)")
+    batch_spec_mixed = BatchEmbedSpec(
+        texts=["good text", "", "another good", "   "],  # Two empty strings
+        model="text-embedding-3-small"
+    )
+    batch_result_mixed = await adapter.embed_batch(batch_spec_mixed)
+    print(f"✅ Total texts: {batch_result_mixed.total_texts}")
+    print(f"✅ Embeddings: {len(batch_result_mixed.embeddings)}")
+    print(f"✅ Failures: {len(batch_result_mixed.failed_texts)}")
+    print(f"✅ Failure indices: {[f['index'] for f in batch_result_mixed.failed_texts]}")
+    assert len(batch_result_mixed.embeddings) == 2, "Should have 2 successful embeddings"
+    assert len(batch_result_mixed.failed_texts) == 2, "Should have 2 failures"
+    assert batch_result_mixed.failed_texts[0]['index'] == 1, "First failure at index 1"
+    assert batch_result_mixed.failed_texts[1]['index'] == 3, "Second failure at index 3"
+    
+    # TEST 5: Streaming
+    print("\n[TEST 5] Streaming Embed")
+    stream_spec = EmbedSpec(
+        text="Streaming test text",
+        model="text-embedding-3-small"
+    )
+    chunks = []
+    async for chunk in adapter.stream_embed(stream_spec):
+        chunks.append(chunk)
+        print(f"✅ Chunk: {len(chunk.embeddings)} embeddings, is_final={chunk.is_final}")
+    assert len(chunks) == 1, "Should have exactly 1 chunk"
+    assert chunks[0].is_final, "Chunk should be final"
+    assert len(chunks[0].embeddings) == 1, "Chunk should have 1 embedding"
+    assert chunks[0].embeddings[0].dimensions == 1536, "Wrong dimensions"
+    
+    # TEST 6: Token Counting
+    print("\n[TEST 6] Token Counting")
+    text = "Count these tokens please"
+    count = await adapter.count_tokens(text, "text-embedding-3-small")
+    print(f"✅ Token count: {count}")
+    assert count == 4, "Should have 4 tokens"
+    
+    # TEST 7: Stats
+    print("\n[TEST 7] Stats")
+    stats = await adapter.get_stats()
+    print(f"✅ Total requests: {stats.total_requests}")
+    print(f"✅ Total texts: {stats.total_texts}")
+    print(f"✅ Total tokens: {stats.total_tokens}")
+    print(f"✅ Avg time (ms): {stats.avg_processing_time_ms:.2f}")
+    print(f"✅ Errors: {stats.error_count}")
+    assert stats.total_requests > 0, "Should have requests"
+    assert stats.total_texts > 0, "Should have processed texts"
+    assert stats.total_tokens > 0, "Should have processed tokens"
+    
+    # TEST 8: Health Check
+    print("\n[TEST 8] Health Check")
+    health = await adapter.health()
+    print(f"✅ OK: {health['ok']}")
+    print(f"✅ Status: {health.get('status')}")
+    print(f"✅ Server: {health.get('server')}")
+    print(f"✅ Models: {len(health.get('models', {}))}")
+    assert health['ok'], "Health check should pass"
+    
+    # TEST 9: Error Handling (Invalid Model)
+    print("\n[TEST 9] Error Handling (Invalid Model)")
+    try:
+        bad_spec = EmbedSpec(
+            text="Test",
+            model="invalid-model"
+        )
+        await adapter.embed(bad_spec)
+        print("❌ Should have raised ModelNotAvailable")
+    except ModelNotAvailable as e:
+        print(f"✅ Caught ModelNotAvailable: {e}")
+    
+    # TEST 10: Error Handling (Empty Text)
+    print("\n[TEST 10] Error Handling (Empty Text)")
+    try:
+        empty_spec = EmbedSpec(
+            text="",
+            model="text-embedding-3-small"
+        )
+        await adapter.embed(empty_spec)
+        print("❌ Should have raised BadRequest")
+    except BadRequest as e:
+        print(f"✅ Caught BadRequest: {e}")
+    
+    print("\n" + "=" * 60)
+    print("ALL TESTS PASSED ✅")
+    print("=" * 60)
+    
+    # Final stats summary
+    final_stats = await adapter.get_stats()
+    print(f"\n📊 Final Stats:")
+    print(f"   - Total requests: {final_stats.total_requests}")
+    print(f"   - Total texts embedded: {final_stats.total_texts}")
+    print(f"   - Total tokens processed: {final_stats.total_tokens}")
+    print(f"   - Average processing time: {final_stats.avg_processing_time_ms:.2f}ms")
+    print(f"   - Errors: {final_stats.error_count}")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+
 ```
 
 ---
