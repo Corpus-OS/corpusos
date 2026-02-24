@@ -186,40 +186,56 @@ A complete quick start with all four protocols is in [`docs/guides/QUICK_START.m
 <summary><strong>Embeddings</strong></summary>
 
 ```python
+import asyncio
 from corpus_sdk.embedding.embedding_base import (
     BaseEmbeddingAdapter, EmbedSpec, OperationContext,
     EmbeddingVector, EmbeddingCapabilities, EmbedResult
 )
 
-class ExampleEmbeddingAdapter(BaseEmbeddingAdapter):
+class QuickEmbeddingAdapter(BaseEmbeddingAdapter):
     async def _do_capabilities(self) -> EmbeddingCapabilities:
         return EmbeddingCapabilities(
-            server="example-embeddings", version="1.0.0",
-            supported_models=("example-embed-001",),
-            max_batch_size=128, max_text_length=8192,
-            supports_normalization=True, normalizes_at_source=False,
-            supports_deadline=True, supports_token_counting=False,
+            server="quick-embeddings",
+            version="1.0.0",
+            supported_models=("quick-embed-001",),
+            max_batch_size=128,
+            max_text_length=8192,
+            supports_normalization=True,
+            normalizes_at_source=False,
+            supports_deadline=True,
+            supports_token_counting=False,
         )
 
     async def _do_embed(self, spec: EmbedSpec, *, ctx=None) -> EmbedResult:
         vec = [0.1, 0.2, 0.3]
         return EmbedResult(
-            embedding=EmbeddingVector(vector=vec, text=spec.text,
-                                      model=spec.model, dimensions=len(vec)),
-            model=spec.model, text=spec.text,
-            tokens_used=None, truncated=False,
+            embedding=EmbeddingVector(
+                vector=vec,
+                text=spec.text,
+                model=spec.model,
+                dimensions=len(vec)
+            ),
+            model=spec.model,
+            text=spec.text,
+            tokens_used=None,
+            truncated=False,
         )
 
     async def _do_health(self, *, ctx=None) -> dict:
-        return {"ok": True, "server": "example-embeddings", "version": "1.0.0"}
+        return {"ok": True, "server": "quick-embeddings", "version": "1.0.0"}
 
 # Usage
-async with ExampleEmbeddingAdapter() as adapter:
-    ctx = OperationContext(request_id="req-1", tenant="acme")
-    res = await adapter.embed(
-        EmbedSpec(text="hello world", model="example-embed-001"), ctx=ctx
-    )
-    print(res.embedding.vector)
+async def main():
+    async with QuickEmbeddingAdapter() as adapter:
+        ctx = OperationContext(request_id="req-1", tenant="acme")
+        res = await adapter.embed(
+            EmbedSpec(text="hello world", model="quick-embed-001"), ctx=ctx
+        )
+        print(f"Text: '{res.text}'")
+        print(f"Vector: {res.embedding.vector}")
+        print(f"Dimensions: {res.embedding.dimensions}")
+
+asyncio.run(main())
 ```
 </details>
 
