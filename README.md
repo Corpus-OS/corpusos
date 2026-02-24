@@ -301,33 +301,57 @@ asyncio.run(main())
 <summary><strong>Vector</strong></summary>
 
 ```python
+import asyncio
 from corpus_sdk.vector.vector_base import (
     BaseVectorAdapter, VectorCapabilities, QuerySpec,
     QueryResult, Vector, VectorMatch, OperationContext, VectorID
 )
 
-class ExampleVectorAdapter(BaseVectorAdapter):
+class QuickVectorAdapter(BaseVectorAdapter):
+    def __init__(self):
+        super().__init__()
+        # Simple in-memory storage
+        self.vectors = {}
+    
     async def _do_capabilities(self) -> VectorCapabilities:
         return VectorCapabilities(
-            server="example-vector", version="1.0.0", max_dimensions=3
+            server="quick-vector",
+            version="1.0.0",
+            max_dimensions=3
         )
 
     async def _do_query(self, spec: QuerySpec, *, ctx=None) -> QueryResult:
-        v = Vector(id=VectorID("v1"), vector=[0.1, 0.2, 0.3],
-                   metadata={"label": "demo"}, namespace=spec.namespace)
+        # Return a simple hardcoded match
+        v = Vector(
+            id=VectorID("v1"),
+            vector=[0.1, 0.2, 0.3],
+            metadata={"label": "demo"},
+            namespace=spec.namespace or "default"
+        )
         return QueryResult(
             matches=[VectorMatch(vector=v, score=0.99, distance=0.01)],
-            query_vector=spec.vector, namespace=spec.namespace, total_matches=1,
+            query_vector=spec.vector,
+            namespace=spec.namespace or "default",
+            total_matches=1,
         )
 
     async def _do_health(self, *, ctx=None) -> dict:
-        return {"ok": True, "server": "example-vector", "version": "1.0.0"}
+        return {"ok": True, "server": "quick-vector", "version": "1.0.0"}
 
 # Usage
-adapter = ExampleVectorAdapter()
-ctx = OperationContext(request_id="req-3", tenant="acme")
-result = await adapter.query(QuerySpec(vector=[0.1, 0.2, 0.3], top_k=1), ctx=ctx)
-print(result.matches[0].score)
+async def main():
+    adapter = QuickVectorAdapter()
+    ctx = OperationContext(request_id="req-3", tenant="acme")
+    result = await adapter.query(
+        QuerySpec(vector=[0.1, 0.2, 0.3], top_k=1),
+        ctx=ctx
+    )
+    print(f"Query vector: {result.query_vector}")
+    print(f"Top match score: {result.matches[0].score}")
+    print(f"Match ID: {result.matches[0].vector.id}")
+    print(f"Match metadata: {result.matches[0].vector.metadata}")
+
+asyncio.run(main())
 ```
 </details>
 
