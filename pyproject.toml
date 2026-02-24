@@ -8,7 +8,7 @@ version = "1.0.0"
 description = "Protocol-first, vendor-neutral SDK for LLM, Embedding, Vector, and Graph backends."
 readme = "README.md"
 license = { text = "Apache-2.0" }
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 authors = [{ name = "Corpus", email = "standards@adaptersdk.org" }]
 dependencies = []
 
