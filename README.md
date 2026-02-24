@@ -243,41 +243,57 @@ asyncio.run(main())
 <summary><strong>LLM</strong></summary>
 
 ```python
+import asyncio
 from corpus_sdk.llm.llm_base import (
     BaseLLMAdapter, OperationContext, LLMCompletion,
     TokenUsage, LLMCapabilities
 )
 
-class ExampleLLMAdapter(BaseLLMAdapter):
+class QuickLLMAdapter(BaseLLMAdapter):
     async def _do_capabilities(self) -> LLMCapabilities:
         return LLMCapabilities(
-            server="example-llm", version="1.0.0",
-            model_family="gpt-4", max_context_length=8192,
-            supports_streaming=True, supports_roles=True,
-            supports_json_output=False, supports_parallel_tool_calls=False,
-            idempotent_writes=False, supports_multi_tenant=True,
+            server="quick-llm",
+            version="1.0.0",
+            model_family="gpt-4",
+            max_context_length=8192,
+            supports_streaming=True,
+            supports_roles=True,
+            supports_json_output=False,
+            supports_parallel_tool_calls=False,
+            idempotent_writes=False,
+            supports_multi_tenant=True,
             supports_system_message=True,
         )
 
     async def _do_complete(self, messages, model, **kwargs) -> LLMCompletion:
         return LLMCompletion(
-            text="Hello from example-llm!", model=model,
+            text="Hello from quick-llm!",
+            model=model,
             model_family="gpt-4",
             usage=TokenUsage(prompt_tokens=5, completion_tokens=5, total_tokens=10),
             finish_reason="stop",
         )
 
+    async def _do_count_tokens(self, text, *, model=None, ctx=None) -> int:
+        return len(text.split())  # Simple word count
+
     async def _do_health(self, *, ctx=None) -> dict:
-        return {"ok": True, "server": "example-llm", "version": "1.0.0"}
+        return {"ok": True, "server": "quick-llm", "version": "1.0.0"}
 
 # Usage
-async with ExampleLLMAdapter() as adapter:
-    ctx = OperationContext(request_id="req-2", tenant="acme")
-    resp = await adapter.complete(
-        messages=[{"role": "user", "content": "Say hi"}],
-        model="example-llm-001", ctx=ctx,
-    )
-    print(resp.text)
+async def main():
+    async with QuickLLMAdapter() as adapter:
+        ctx = OperationContext(request_id="req-2", tenant="acme")
+        resp = await adapter.complete(
+            messages=[{"role": "user", "content": "Say hi"}],
+            model="quick-llm-001",
+            ctx=ctx,
+        )
+        print(f"Response: {resp.text}")
+        print(f"Model: {resp.model}")
+        print(f"Tokens: {resp.usage.total_tokens}")
+
+asyncio.run(main())
 ```
 </details>
 
