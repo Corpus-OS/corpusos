@@ -37,12 +37,14 @@ This specification defines the Corpus Framework Adapter Suite for Graph operatio
   * [4.13. SIEM-Safe Observability (MUST)](#413-siem-safe-observability-must)
   * [4.14. Testing Accommodations (INFORMATIVE)](#414-testing-accommodations-informative)
   * [4.15. Adapter Lifecycle State Machine (MUST)](#415-adapter-lifecycle-state-machine-must)
+  * [4.16. Thread Pool Executors for Tool Bridging (MUST)](#416-thread-pool-executors-for-tool-bridging-must)
 * [5. Shared Utility Layer](#5-shared-utility-layer)
   * [5.1. Validation Utilities](#51-validation-utilities)
     * [5.1.1. Query Validation](#511-query-validation)
     * [5.1.2. Batch Operation Validation](#512-batch-operation-validation)
     * [5.1.3. Upsert Nodes Spec Validation](#513-upsert-nodes-spec-validation)
     * [5.1.4. Result Type Validation](#514-result-type-validation)
+    * [5.1.5. Parameter Coercion for Tool Inputs](#515-parameter-coercion-for-tool-inputs)
   * [5.2. Snapshot Utilities](#52-snapshot-utilities)
   * [5.3. Operation Context Detection](#53-operation-context-detection)
   * [5.4. Async Iterator Detection & Normalization](#54-async-iterator-detection--normalization)
@@ -478,7 +480,7 @@ async def aclose(self) -> None:
 ```
 
 **Thread Safety of close():**  
-The `close()` and `aclose()` methods MUST be thread-safe and idempotent. If called concurrently from multiple threads, the cleanup must happen exactly once, and subsequent calls must have no effect.
+The `close()` and `aclose()` methods MUST be thread-safe and idempotent. If called concurrently from multiple threads, the cleanup must happen exactly once, and subsequent calls must have no effect. Implementations MUST use a lock to guard the cleanup logic and mark the instance as closed before releasing the lock.
 
 ### 4.8. Event Loop Guards (MUST)
 
@@ -678,6 +680,19 @@ Each adapter instance MUST maintain a clear lifecycle with the following states 
 - Calling `close()` or `aclose()` multiple times is allowed and MUST be idempotent.
 - Calling `close()` from within an async context MUST raise `RuntimeError` (except in controlled tool bridge scenarios).
 
+**Partial Initialization Failure:**  
+If an exception occurs during `__init__` after some resources have been allocated (e.g., a lock created but validation fails), the adapter MUST clean up any successfully allocated resources before propagating the exception. Implementations SHOULD use a try/finally block or a context manager to ensure cleanup. After a failed `__init__`, the object is considered not constructed and MUST NOT be used; no lifecycle state is defined. Callers must ensure that if `__init__` raises, the object reference is discarded.
+
+### 4.16. Thread Pool Executors for Tool Bridging (MUST)
+
+For adapters that provide tool integration (AutoGen, CrewAI, LangChain), any thread pool executor used to bridge sync calls from async contexts MUST satisfy the following requirements:
+
+- The executor MUST be a **daemon** thread pool (`daemon=True`) so that it does not block interpreter shutdown.
+- The pool MUST have a bounded work queue with a configurable maximum size (default 1000). If the queue is full, submitting a new task MUST block or raise an exception; implementations MAY use a `Queue` with `maxsize` and a timeout.
+- The executor MUST be created as a **module‑level singleton** shared by all instances of that adapter to avoid unbounded thread creation.
+- On interpreter exit, daemon threads are abruptly terminated; this is acceptable because the pool only runs short‑lived graph calls, and abrupt termination will not leak resources (the underlying translator calls are expected to handle cancellation).
+- No explicit shutdown of the pool is required, but implementations MAY register an `atexit` handler to attempt graceful shutdown (non‑normative).
+
 ---
 
 ## 5. Shared Utility Layer
@@ -751,6 +766,59 @@ def validate_graph_result_type(
             f"[{error_code}]"
         )
     return result
+```
+
+#### 5.1.5. Parameter Coercion for Tool Inputs
+
+The following functions MUST be used by adapters that accept LLM‑provided parameters (e.g., CrewAI, LangChain tools) to safely convert and bound numeric inputs.
+
+```python
+def coerce_bounded_positive_int(
+    value: Any,
+    *,
+    name: str,
+    default: int,
+    min_value: int = 1,
+    max_value: int = 100,
+) -> int:
+    """
+    Convert a possibly-LLM-provided value into a safe bounded positive int.
+
+    Behavior:
+      - If conversion fails, returns the provided default.
+      - If converted value is out of bounds, clamps to [min_value, max_value].
+      - MUST NOT raise an exception.
+
+    This function is used to protect tool execution from malformed or malicious inputs.
+    """
+    try:
+        # Allow strings and floats that represent integers ("25", 25.0).
+        ivalue = int(value)
+    except Exception:
+        logger.debug("Invalid tool param %s=%r; defaulting to %d", name, value, default)
+        return default
+
+    if ivalue < min_value:
+        return min_value
+    if ivalue > max_value:
+        return max_value
+    return ivalue
+
+def validated_max_chunks(value: Any, *, max_allowed: int = 100) -> int:
+    """
+    Specialization of coerce_bounded_positive_int for the 'max_chunks' parameter.
+
+    - Converts value to int.
+    - If conversion fails, returns 25 (default).
+    - Clamps to [1, max_allowed].
+    """
+    return coerce_bounded_positive_int(
+        value,
+        name="max_chunks",
+        default=25,
+        min_value=1,
+        max_value=max_allowed,
+    )
 ```
 
 ### 5.2. Snapshot Utilities
@@ -1028,11 +1096,14 @@ All adapters MUST produce the same graph operation results for the same inputs, 
 - **Mutation equivalence:** The same upsert/delete operations MUST produce identical state changes across all adapters.
 - **Error equivalence:** The same invalid inputs MUST produce equivalent error types and codes across all adapters.
 
+**Streaming chunk equivalence:** For streaming graph operations (`stream_query` / `astream_query`), adapters MUST produce semantically equivalent results regardless of chunk boundaries. Two streaming results are considered semantically equivalent if the concatenation of all `QueryChunk` items from one adapter yields the same sequence of data elements (e.g., rows, edges, nodes) as the concatenation from another adapter, when given identical inputs. Chunk boundaries MAY differ; adapters MAY split the result stream into chunks arbitrarily, but each chunk MUST contain only complete data elements (no partial rows/edges) and the overall order MUST be preserved.
+
 **Documentation Requirement for Non-Deterministic Providers:**  
-If the underlying graph provider is known to be non-deterministic (e.g., due to eventual consistency, load balancing across replicas), the adapter MUST include a clear statement in its public documentation explaining:
-- The source of non-determinism
-- Its practical impact on applications
-- Any configuration options that can mitigate it
+If the underlying graph provider is known to be non-deterministic (e.g., due to eventual consistency, load balancing across replicas), the adapter MUST include a clear statement in its public documentation (e.g., class docstring, module-level documentation, or a separate documentation page) that explains:
+- The name of the provider and the source of non-determinism.
+- Whether the non-determinism affects query results, mutation visibility, or only metadata (e.g., timing).
+- Any configuration options that can mitigate non-determinism (e.g., read-after-write consistency, replica pinning).
+- The practical impact on applications (e.g., retrieval may vary slightly between runs, mutations may not be immediately visible).
 
 ### 6.8. Translator Shim Equivalence (MUST)
 
@@ -1256,7 +1327,7 @@ The CrewAI adapter exposes Corpus graph operations as CrewAI BaseTool wrappers, 
 |-----------|----------|
 | No shared runtime context across agents | Extract context from per-call `task` parameter |
 | Tool execution in async agent loops | Bounded thread pool with `_run_blocking_in_crewai_tool_thread()` |
-| LLM-provided parameters need validation | `_coerce_bounded_positive_int()` for numeric parameters |
+| LLM-provided parameters need validation | `coerce_bounded_positive_int()` for numeric parameters (see §5.1.5) |
 | Tool outputs must be JSON strings | `_json_result()` with size bounds and fallback truncation |
 
 ### 8.3. Data Types
@@ -1351,6 +1422,7 @@ def create_crewai_graph_tools(
     - Lazy imports CrewAI
     - Provides both _run (sync) and _arun (async) implementations
     - Uses thread pool for sync-in-async safety
+    - For numeric parameters like max_chunks, uses `validated_max_chunks()` (see §5.1.5)
     - Returns JSON strings with size bounds
     """
 ```
@@ -1384,7 +1456,7 @@ The LangChain adapter exposes Corpus graph operations as LangChain BaseTool wrap
 | Challenge | Solution |
 |-----------|----------|
 | Sync methods called from async agent runtimes | Event loop detection + worker thread bridge |
-| LLM-provided parameters may be malformed | `_validated_max_chunks()` with coercion and clamping |
+| LLM-provided parameters may be malformed | `validated_max_chunks()` with coercion and clamping (see §5.1.5) |
 | Tool outputs must be JSON strings | `_json_result()` with size bounds |
 | Multiple LangChain versions have different tool imports | Soft import with fallback paths |
 | Config objects vary across versions | Structural context extraction |
@@ -1490,7 +1562,7 @@ def create_langchain_graph_tools(
     
     - Lazy imports LangChain BaseTool
     - Provides _run (sync) and _arun (async) implementations
-    - Validates LLM-provided parameters with _validated_max_chunks()
+    - Validates LLM-provided parameters with `validated_max_chunks()` (see §5.1.5)
     - Returns JSON strings with size bounds
     """
 ```
@@ -1648,23 +1720,57 @@ class CorpusGraphStore(_LlamaIndexGraphStore):
         delete_triplet_query: Optional[str] = None,
     ):
         """Initialize with client and optional query templates."""
+        self._client = client
+        self._namespace = namespace
+        self._get_query = get_query
+        self._get_rel_map_query = get_rel_map_query
+        self._upsert_triplet_query = upsert_triplet_query
+        self._delete_triplet_query = delete_triplet_query
+
+        # Validation of query templates (normative)
+        if get_query is not None and not isinstance(get_query, str):
+            raise TypeError("get_query must be a string or None")
+        if get_rel_map_query is not None and not isinstance(get_rel_map_query, str):
+            raise TypeError("get_rel_map_query must be a string or None")
+        if upsert_triplet_query is not None and not isinstance(upsert_triplet_query, str):
+            raise TypeError("upsert_triplet_query must be a string or None")
+        if delete_triplet_query is not None and not isinstance(delete_triplet_query, str):
+            raise TypeError("delete_triplet_query must be a string or None")
     
     def get(self, subj: str) -> List[List[str]]:
         """Get triplets for subject using get_query template."""
+        if self._get_query is None:
+            raise NotImplementedError("get_query not provided")
+        # Implementation uses self._get_query
+        ...
     
     def get_rel_map(self, subjs: Optional[List[str]] = None, depth: int = 2, limit: int = 30) -> Dict[str, List[List[str]]]:
         """Get relation map using get_rel_map_query template."""
+        if self._get_rel_map_query is None:
+            raise NotImplementedError("get_rel_map_query not provided")
+        ...
     
     def upsert_triplet(self, subj: str, rel: str, obj: str) -> None:
         """Upsert triplet using upsert_triplet_query template."""
+        if self._upsert_triplet_query is None:
+            raise NotImplementedError("upsert_triplet_query not provided")
+        ...
     
     def delete(self, subj: str, rel: str, obj: str) -> None:
         """Delete triplet using delete_triplet_query template."""
+        if self._delete_triplet_query is None:
+            raise NotImplementedError("delete_triplet_query not provided")
+        ...
     
     def get_schema(self, refresh: bool = False) -> str:
         """Return schema as string."""
         return str(self._client.get_schema())
 ```
+
+**Template Validation (Normative):**  
+- All query template strings MUST be provided at initialization if the corresponding method is to be used.
+- If a template is `None` and the corresponding method is called, the adapter MUST raise `NotImplementedError`.
+- Templates are not validated for syntactic correctness at initialization; errors will be raised at runtime when the query is executed. This is acceptable because templates may contain placeholders that are only resolvable at runtime.
 
 ### 10.6. Error Codes
 
@@ -1997,7 +2103,7 @@ graph_stream_chunks_total{framework,operation}
 - Validate UpsertNodesSpec structure
 - Validate UpsertEdgesSpec edges (ID, src, dst, label required)
 - Validate delete specs have either filter or non-empty ids
-- Validate numeric parameters from LLMs (coerce and clamp)
+- Validate numeric parameters from LLMs using `coerce_bounded_positive_int()` (see §5.1.5)
 
 ### 16.3. Testing
 
@@ -2018,9 +2124,9 @@ Each adapter MUST pass:
 #### 16.3.2. Framework-Specific Tests
 
 - **AutoGen:** Tool creation, conversation context extraction, thread pool bridge
-- **CrewAI:** Task context extraction, tool bridge executor, parameter coercion
-- **LangChain:** Config context extraction, close() coroutine handling, tool creation
-- **LlamaIndex:** Callback manager context, GraphStore triplet mapping, request builders
+- **CrewAI:** Task context extraction, tool bridge executor, parameter coercion using `coerce_bounded_positive_int()`
+- **LangChain:** Config context extraction, close() coroutine handling, tool creation, parameter coercion using `validated_max_chunks()`
+- **LlamaIndex:** Callback manager context, GraphStore triplet mapping, request builders, template validation
 - **Semantic Kernel:** Context+settings translation, kwargs forwarding, plugin wrapper
 
 #### 16.3.3. Cross-Adapter Tests
