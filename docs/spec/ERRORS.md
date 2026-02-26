@@ -1,5 +1,12 @@
 # Normalized Error Taxonomy
 
+**Errors Version:** `1.0`
+
+> This document defines the **normalized error model** used across **Graph**, **LLM**, **Vector**, and **Embedding** adapters. It aligns with the Specification's Common Foundation (§6.3), Error Handling & Resilience (§12), and protocol-specific sections (§7.6 Graph health, §8.5 LLM, §9.5 Vector, §10.3 Embedding).
+> It is **implementation-agnostic** and compatible with any transport (HTTP, gRPC, queues) and any observability backend.
+
+---
+
 **Table of Contents**
 - [0) Goals & Non-Goals](#0-goals--non-goals)
 - [1) Normalized Error Classes (Canonical)](#1-normalized-error-classes-canonical)
@@ -25,12 +32,6 @@ Copyright © 2026 Interoperable Intelligence Inc.
 SPDX-License-Identifier: Apache-2.0
 
 ---
-
-**Errors Version:** `1.0`
-
-> This document defines the **normalized error model** used across **Graph**, **LLM**, **Vector**, and **Embedding** adapters. It aligns with the Specification's Common Foundation (§6.3), Error Handling & Resilience (§12), and protocol-specific sections (§7.6 Graph health, §8.5 LLM, §9.5 Vector, §10.3 Embedding).  
-
-> It is **implementation-agnostic** and compatible with any transport (HTTP, gRPC, queues) and any observability backend.
 
 ## 0) Goals & Non-Goals
 
