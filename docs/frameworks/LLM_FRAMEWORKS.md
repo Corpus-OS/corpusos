@@ -420,7 +420,7 @@ def _translator(self) -> LLMTranslator:
 
 ### 4.7. Resource Cleanup Hierarchy (MUST)
 
-All adapters MUST implement both sync and async context managers with proper cleanup:
+All adapters MUST implement both sync and async context managers with proper cleanup. The `close()` and `aclose()` methods MUST be thread‑safe and idempotent. If called concurrently from multiple threads, the cleanup must happen exactly once, and subsequent calls must have no effect. Implementations MUST use a lock to guard the cleanup logic and mark the instance as closed before releasing the lock.
 
 ```python
 def __enter__(self):
@@ -437,19 +437,21 @@ async def __aexit__(self, exc_type, exc, tb):
 
 def close(self) -> None:
     """Synchronous cleanup."""
-    if self._closed:
-        return
-    self._closed = True
-    _maybe_close_sync(self._translator_cache)
-    _maybe_close_sync(self._llm_adapter)
+    with self._close_lock:
+        if self._closed:
+            return
+        self._closed = True
+        _maybe_close_sync(self._translator_cache)
+        _maybe_close_sync(self._llm_adapter)
 
 async def aclose(self) -> None:
     """Asynchronous cleanup."""
-    if self._aclosed:
-        return
-    self._aclosed = True
-    await _maybe_close_async(self._translator_cache)
-    await _maybe_close_async(self._llm_adapter)
+    async with self._aclose_lock:
+        if self._aclosed:
+            return
+        self._aclosed = True
+        await _maybe_close_async(self._translator_cache)
+        await _maybe_close_async(self._llm_adapter)
 ```
 
 ### 4.8. Event Loop Guards (MUST)
@@ -603,6 +605,9 @@ Each adapter instance MUST maintain a clear lifecycle with the following states:
 **Illegal States:**
 - Attempting any operation after `CLOSED` MUST raise `RuntimeError`
 - Calling `close()` or `aclose()` multiple times is allowed and MUST be idempotent
+
+**Partial Initialization Failure:**  
+If an exception occurs during `__init__` after some resources have been allocated (e.g., a lock created but validation fails), the adapter MUST clean up any successfully allocated resources before propagating the exception. Implementations SHOULD use a try/finally block or a context manager to ensure cleanup. After a failed `__init__`, the object is considered not constructed and MUST NOT be used; no lifecycle state is defined. Callers must ensure that if `__init__` raises, the object reference is discarded.
 
 ### 4.15. Framework Context Building (MUST)
 
@@ -903,7 +908,7 @@ Adapters SHOULD:
 All adapters MUST produce the same completion results for the same inputs, **regardless of which framework adapter is used**. This ensures that applications can switch frameworks without changing LLM behavior.
 
 - **Completion equivalence:** The same messages and sampling parameters MUST return identical completion text and token usage (within floating‑point tolerance).
-- **Streaming equivalence:** The concatenation of stream chunks MUST equal the non‑streaming completion result.
+- **Streaming equivalence:** The concatenation of all text chunks from a streaming completion MUST be exactly equal (string equality) to the text content of the non‑streaming completion result, for the same input messages and sampling parameters. This means that providers that chunk at different token boundaries (e.g., word vs. subword) must still reconstruct the identical final text. The adapter MUST NOT modify or normalize the streamed text beyond what the underlying translator provides.
 - **Token counting equivalence:** The same messages MUST return identical token counts across all adapters.
 
 **Floating point tolerance:** For the same input messages and model, output logits/probabilities MAY vary within 1e‑6 due to numerical differences, but final text MUST be identical.
@@ -931,30 +936,37 @@ def _build_framework_ctx(self, kwargs):
     return framework_ctx
 ```
 
-The framework‑specific translator is responsible for converting tool definitions to the format expected by the underlying LLM.
+**Handling Unsupported Tools:**  
+If the underlying translator or LLM adapter does not support tool calling, the adapter MUST behave as follows:
+
+- If tools are provided, the adapter MUST raise a `NotSupportedError` (or framework‑specific equivalent) with a clear error message indicating that tools are not supported.
+- Alternatively, the adapter MAY silently ignore tools if and only if the framework's specification allows ignoring tools (this MUST be documented). The default and RECOMMENDED behavior is to raise an error.
+
+A new error code `TOOL_NOT_SUPPORTED` MUST be used in the error context.
 
 ### 6.10. System Message Handling
 
-All adapters MUST handle system messages appropriately:
+If the input messages contain a system message, the adapter MUST ensure that the system message is passed to the translator in a way that respects the framework's expectations. The preferred approach is to extract the system message from the list of messages and pass it as a separate `system_message` parameter to the translator, removing it from the message list. If multiple system messages are present, the adapter SHOULD concatenate them with newlines or raise an error if the framework does not support multiple system messages. The exact behavior must be documented.
+
+**Important:** Adapters MUST NOT mutate the input `kwargs` dictionary. Instead, they should build a new dictionary for the translator.
 
 ```python
-def _to_translator_messages(self, messages):
+def _to_translator_messages(self, messages, kwargs):
     result = []
-    system_message = None
-    
+    system_parts = []
     for msg in messages:
         role = self._extract_role(msg)
         if role == "system":
-            # Extract system message for separate handling
-            system_message = self._extract_content(msg)
+            system_parts.append(self._extract_content(msg))
         else:
             result.append({"role": role, "content": self._extract_content(msg)})
     
-    # If translator expects system message as separate parameter
-    if system_message and "system_message" not in kwargs:
-        kwargs["system_message"] = system_message
+    if system_parts:
+        # Build new kwargs, do not mutate original
+        kwargs = dict(kwargs)
+        kwargs["system_message"] = "\n".join(system_parts)
     
-    return result
+    return result, kwargs
 ```
 
 ---
@@ -1085,11 +1097,25 @@ def create_autogen_chat_completion_client(
     
     Returns a client that:
     - Implements AutoGen's ChatCompletionClient protocol
-    - Tracks token usage (total_usage(), actual_usage(), reset_usage())
-    - Handles tool conversion
-    - Provides remaining_tokens() for budgeting
+    - Tracks token usage:
+        * total_usage() -> RequestUsage: cumulative usage since wrapper creation
+        * actual_usage() -> RequestUsage: usage since last reset_usage() call
+        * reset_usage() -> None: resets actual usage counters to zero
+        * remaining_tokens(messages, tools) -> int: estimates remaining context tokens
+          (returns 0 if context window unknown)
+    - Handles tool conversion via _autogen_tools_to_openai()
+    - Provides remaining_tokens() for budgeting (subtracts counted tokens from
+      max_context_tokens from capabilities, falls back to 10_000 if unknown)
     """
 ```
+
+**Normative behavior:**
+- `total_usage()` returns cumulative prompt and completion tokens since wrapper instantiation.
+- `actual_usage()` returns tokens since the last `reset_usage()` call.
+- `reset_usage()` sets actual counters to zero; does not affect total counters.
+- `remaining_tokens()` uses `capabilities` to get `max_context_tokens` (or fallback 10_000), subtracts `count_tokens(messages, tools)`, and returns max(0, remaining). If `max_context_tokens` cannot be determined, returns a conservative default (10000) minus counted tokens.
+- All methods MUST be thread‑safe.
+- The wrapper MUST NOT mutate the inner client.
 
 #### 7.5.2. `_autogen_tools_to_openai()`
 
@@ -1110,6 +1136,7 @@ class ErrorCodes:
     BAD_STREAM_CHUNK = "AUTOGEN_LLM_BAD_STREAM_CHUNK"
     BAD_USAGE_RESULT = "AUTOGEN_LLM_BAD_USAGE_RESULT"
     SYNC_WRAPPER_CALLED_IN_EVENT_LOOP = "AUTOGEN_LLM_SYNC_WRAPPER_CALLED_IN_EVENT_LOOP"
+    TOOL_NOT_SUPPORTED = "AUTOGEN_LLM_TOOL_NOT_SUPPORTED"
 ```
 
 ### 7.7. AutoGen‑Specific Context
@@ -1233,6 +1260,7 @@ class ErrorCodes:
     BAD_OPERATION_CONTEXT = "CREWAI_LLM_BAD_OPERATION_CONTEXT"
     BAD_INIT_CONFIG = "CREWAI_LLM_BAD_INIT_CONFIG"
     SYNC_WRAPPER_CALLED_IN_EVENT_LOOP = "CREWAI_LLM_SYNC_WRAPPER_CALLED_IN_EVENT_LOOP"
+    TOOL_NOT_SUPPORTED = "CREWAI_LLM_TOOL_NOT_SUPPORTED"
 ```
 
 ### 8.7. CrewAI‑Specific Context
@@ -1367,6 +1395,7 @@ class ErrorCodes:
     BAD_OPERATION_CONTEXT = "LANGCHAIN_LLM_BAD_OPERATION_CONTEXT"
     BAD_INIT_CONFIG = "LANGCHAIN_LLM_BAD_INIT_CONFIG"
     SYNC_WRAPPER_CALLED_IN_EVENT_LOOP = "LANGCHAIN_LLM_SYNC_WRAPPER_CALLED_IN_EVENT_LOOP"
+    TOOL_NOT_SUPPORTED = "LANGCHAIN_LLM_TOOL_NOT_SUPPORTED"
 ```
 
 ### 9.7. LangChain‑Specific Context
@@ -1509,6 +1538,7 @@ class ErrorCodes:
     BAD_OPERATION_CONTEXT = "LLAMAINDEX_LLM_BAD_OPERATION_CONTEXT"
     BAD_INIT_CONFIG = "LLAMAINDEX_LLM_BAD_INIT_CONFIG"
     SYNC_WRAPPER_CALLED_IN_EVENT_LOOP = "LLAMAINDEX_LLM_SYNC_WRAPPER_CALLED_IN_EVENT_LOOP"
+    TOOL_NOT_SUPPORTED = "LLAMAINDEX_LLM_TOOL_NOT_SUPPORTED"
 ```
 
 ### 10.7. LlamaIndex‑Specific Context
@@ -1632,6 +1662,7 @@ class ErrorCodes:
     BAD_OPERATION_CONTEXT = "SEMANTIC_KERNEL_LLM_BAD_OPERATION_CONTEXT"
     BAD_INIT_CONFIG = "SEMANTIC_KERNEL_LLM_BAD_INIT_CONFIG"
     SYNC_WRAPPER_CALLED_IN_EVENT_LOOP = "SEMANTIC_KERNEL_LLM_SYNC_WRAPPER_CALLED_IN_EVENT_LOOP"
+    TOOL_NOT_SUPPORTED = "SEMANTIC_KERNEL_LLM_TOOL_NOT_SUPPORTED"
 ```
 
 ### 11.7. Semantic Kernel‑Specific Context
@@ -1659,6 +1690,7 @@ The adapter extracts from `settings`:
 | `RATE_LIMIT_EXCEEDED` | Raise with `retry_after_ms` | Yes |
 | `DEADLINE_EXCEEDED` | Propagate with budget exhausted message | Conditional |
 | `TRANSIENT_NETWORK` | Framework network error | Yes |
+| `TOOL_NOT_SUPPORTED` | Raise `NotSupportedError` (or framework equivalent) | No |
 
 ### 12.2. Retry Semantics
 
@@ -2101,6 +2133,7 @@ result = await kernel.run_async(func, input="Hello!")
 | `SYNC_WRAPPER_CALLED_IN_EVENT_LOOP` | Sync method called from async context | All |
 | `CONTENT_FILTERED` | Content filtered by safety system | All |
 | `RATE_LIMIT_EXCEEDED` | Rate limit exceeded, retry after | All |
+| `TOOL_NOT_SUPPORTED` | Tool calling not supported by underlying adapter | All |
 
 ---
 
@@ -2114,7 +2147,7 @@ result = await kernel.run_async(func, input="Hello!")
 | LlamaIndex | Stable | 100% | ≥0.10.0 |
 | Semantic Kernel | Stable | 100% | ≥1.0.0 |
 
-**Note:** This appendix is non‑normative and provided for informational purposes only. The authoritative conformance status is determined by the conformance test suite (§16.3) and the implementation’s own documentation.
+**Note:** This appendix is non‑normative and provided for informational purposes only. The authoritative conformance status is determined by the conformance test suite (§16.3) and the implementation’s own documentation. This table may not be up‑to‑date; refer to the latest release notes for current status.
 
 ---
 
