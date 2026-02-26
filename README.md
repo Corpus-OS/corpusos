@@ -1150,7 +1150,7 @@ logging.getLogger("corpus_sdk").setLevel(logging.DEBUG)
 ## Contributing
 
 ```bash
-git clone https://github.com/corpus/corpus-sdk.git
+git clone https://github.com/Corpus-OS/corpusos.git
 cd corpus-sdk
 pip install -e ".[dev]"
 pytest
