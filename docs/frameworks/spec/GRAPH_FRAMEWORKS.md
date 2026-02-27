@@ -624,7 +624,6 @@ In this mode:
 - Relying solely on translator-level normalization keeps adapter code simpler while still benefiting from centralized contract enforcement and error-context enrichment.
 ```
 
-
 All adapters MUST implement a consistent `_build_raw_query()` method:
 
 ```python
