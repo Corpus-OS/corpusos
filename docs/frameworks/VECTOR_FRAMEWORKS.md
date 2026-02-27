@@ -1,3 +1,4 @@
+
 # VECTOR FRAMEWORK ADAPTERS SPECIFICATION
 
 **specification_version:** `1.0.0`  
@@ -64,7 +65,7 @@ This specification defines the Corpus Framework Adapter Suite for Vector operati
   * [6.4. Idempotency Semantics](#64-idempotency-semantics)
   * [6.5. Partial Failure Reporting](#65-partial-failure-reporting)
   * [6.6. Backpressure Integration](#66-backpressure-integration)
-  * [6.7. Vector Operation Determinism (MUST)](#67-vector-operation-determinism-must)
+  * [6.7. Vector Operation Determinism (REVISED)](#67-vector-operation-determinism-revised)
   * [6.8. Translator Shim Equivalence (MUST)](#68-translator-shim-equivalence-must)
   * [6.9. Single Source of Truth Pattern (SHOULD)](#69-single-source-of-truth-pattern-should)
   * [6.10. Delete Operation Helper Pattern](#610-delete-operation-helper-pattern)
@@ -291,6 +292,8 @@ A developer might choose to disable strict validation in a controlled environmen
 
 **MMR (Maximal Marginal Relevance)** — Re‑ranking algorithm that balances relevance and diversity.
 
+**Types from the Vector Protocol:** This specification references types defined in the Corpus Vector Protocol V1.0: `VectorMatch`, `QueryResult`, `UpsertResult`, `DeleteResult`, `OperationContext`, `VectorCapabilities`, `BadRequest`, `NotSupported`, `VectorAdapterError`, `Embeddings` (as `Sequence[Sequence[float]]`), and `Metadata` (as `Dict[str, Any]`). Their exact definitions are provided in the protocol specification; adapters need only duck‑type compatibility.
+
 ---
 
 ## 4. Common Foundation Across All Adapters
@@ -458,7 +461,7 @@ def _translator(self) -> VectorTranslator:
 
 ### 4.7. Resource Cleanup Hierarchy (MUST)
 
-All adapters MUST implement both sync and async context managers with proper cleanup:
+All adapters MUST implement both sync and async context managers with proper cleanup. The `close()` and `aclose()` methods MUST be thread‑safe and idempotent. Typical implementations use a lock to guard the cleanup logic.
 
 ```python
 def __enter__(self):
@@ -474,9 +477,10 @@ async def __aexit__(self, exc_type, exc, tb):
     await self.aclose()
 
 def close(self) -> None:
-    if self._closed:
-        return
-    self._closed = True
+    with self._close_lock:
+        if self._closed:
+            return
+        self._closed = True
     
     if hasattr(self._vector, "close"):
         try:
@@ -485,9 +489,10 @@ def close(self) -> None:
             logger.debug("Failed to close vector adapter", exc_info=True)
 
 async def aclose(self) -> None:
-    if self._aclosed:
-        return
-    self._aclosed = True
+    async with self._aclose_lock:
+        if self._aclosed:
+            return
+        self._aclosed = True
     
     if hasattr(self._vector, "aclose"):
         try:
@@ -500,9 +505,6 @@ async def aclose(self) -> None:
     if not self._closed:
         self.close()
 ```
-
-**Thread Safety of close():**  
-The `close()` and `aclose()` methods MUST be thread‑safe and idempotent. If called concurrently from multiple threads, the cleanup must happen exactly once, and subsequent calls must have no effect. Implementations MUST use a lock to guard the cleanup logic and mark the instance as closed before releasing the lock.
 
 ### 4.8. Event Loop Guards (MUST)
 
@@ -526,31 +528,13 @@ def _ensure_not_in_event_loop(api_name: str) -> None:
 
 ### 4.9. Async Streaming Normalization (MUST)
 
-All async streaming methods MUST handle variations in translator return types:
+All async streaming methods MUST handle variations in translator return types. The normalization logic is provided in §5.6.
 
 ```python
-def _is_async_iterator(obj: Any) -> bool:
-    """Return True if object implements AsyncIterator protocol."""
-    return hasattr(obj, "__aiter__") and hasattr(obj, "__anext__")
-
-def _normalize_async_iterator(aiter_or_awaitable: Any) -> Any:
-    """
-    Normalize either AsyncIterator or awaitable→AsyncIterator.
-    
-    Returns awaitable unchanged, AsyncIterator unchanged.
-    Raises TypeError for invalid shapes.
-    """
-    if inspect.isawaitable(aiter_or_awaitable):
-        return aiter_or_awaitable
-    if _is_async_iterator(aiter_or_awaitable):
-        return aiter_or_awaitable
-    
-    raise TypeError(f"Expected AsyncIterator or awaitable; got {type(aiter_or_awaitable)}")
-
 async def astream_query(self, ...):
     # ... setup ...
     aiter_or_awaitable = self._translator.arun_query_stream(...)
-    normalized = _normalize_async_iterator(aiter_or_awaitable)
+    normalized = _normalize_async_iterator(aiter_or_awaitable)   # see §5.6
     
     if inspect.isawaitable(normalized):
         aiter = await normalized
@@ -566,7 +550,7 @@ async def astream_query(self, ...):
 
 ### 4.10. Query Building Semantics (MUST)
 
-All adapters MUST implement a consistent `_build_raw_query()` method:
+All adapters MUST implement a consistent `_build_raw_query()` method. The exact implementation is provided in §B.6.
 
 ```python
 def _build_raw_query(
@@ -631,7 +615,7 @@ def _framework_ctx(self, *, operation: str, namespace: Optional[str] = None) -> 
 
 ### 4.12. Embedding Function Integration
 
-Adapters MUST support both sync and async embedding functions, with clear precedence rules.
+Adapters MUST support both sync and async embedding functions, with clear precedence rules. The implementation helpers are provided in §5.
 
 ```python
 # Sync embedding function (for add_texts, embed_query)
@@ -647,7 +631,7 @@ def _ensure_embeddings(
     - Else, if embedding_function configured, compute.
     - Else, raise NotSupported.
     """
-    # ... implementation ...
+    # Implementation in §5
 
 # Async embedding function (for aadd_texts, aembed_query)
 async def _ensure_embeddings_async(
@@ -658,46 +642,27 @@ async def _ensure_embeddings_async(
     """
     Async-safe version with fallback to sync embedding function in thread pool.
     """
-    # ... implementation ...
+    # Implementation in §5
 ```
 
 **Empty‑input hardening:** For empty or whitespace‑only strings, adapters SHOULD return deterministic zero vectors when the vector dimension is known, rather than calling the embedding function or raising. If dimension is unknown, raise `BadRequest` with code `EMPTY_INPUT_DIM_UNKNOWN`.
 
 ### 4.13. Dimension Hint Management (MUST)
 
-All adapters MUST maintain a thread‑safe, first‑write‑wins dimension hint:
+All adapters MUST maintain a thread‑safe, first‑write‑wins dimension hint. The helper functions are provided in §5.2.
 
 ```python
 def _update_dim_hint(self, dim: Optional[int]) -> None:
     """Thread‑safe, best‑effort update of vector dimension hint."""
-    if dim is None or dim <= 0:
-        return
-    if self._vector_dim_hint is not None:
-        return
-    with self._dim_lock:
-        if self._vector_dim_hint is None:
-            self._vector_dim_hint = int(dim)
+    # Implementation in §5.2
 
 def _maybe_check_dim(self, vec: Sequence[float], *, where: str) -> None:
     """Validate vector dimensionality against hint (if set)."""
-    hint = self._vector_dim_hint
-    if hint is None:
-        return
-    if len(vec) != hint:
-        raise BadRequest(
-            f"vector dimension mismatch in {where}: got {len(vec)}, expected {hint}",
-            code="VECTOR_DIM_MISMATCH",
-        )
+    # Implementation in §5.2
 
 def _zero_vector(self) -> List[float]:
     """Return zero vector of known dimension, or raise."""
-    dim = self._vector_dim_hint
-    if dim is None:
-        raise BadRequest(
-            "vector dimension unknown; cannot generate zero vector",
-            code="UNKNOWN_VECTOR_DIMENSION",
-        )
-    return [0.0] * int(dim)
+    # Implementation in §5.3
 ```
 
 ### 4.14. Score Thresholding (SHOULD)
@@ -720,7 +685,7 @@ Threshold value is configured at client initialization and can be overridden per
 
 ### 4.15. MMR Search Pattern
 
-All adapters SHOULD provide MMR search capabilities with a shared implementation:
+All adapters SHOULD provide MMR search capabilities with a shared implementation. The core MMR logic is provided in §5.10.
 
 ```python
 def _mmr_select_indices(
@@ -737,7 +702,7 @@ def _mmr_select_indices(
     - Caches similarity calculations.
     - Respects lambda_mult in [0,1].
     """
-    # Implementation (common across adapters)
+    # Implementation in §5.10
     pass
 ```
 
@@ -787,15 +752,16 @@ If an exception occurs during `__init__` after some resources have been allocate
 
 For adapters that provide tool integration (AutoGen, CrewAI, LangChain), any thread pool executor used to bridge sync calls from async contexts MUST satisfy the following requirements:
 
-- The executor MUST be a **daemon** thread pool (`daemon=True`) so that it does not block interpreter shutdown.
+- The executor's threads MUST NOT prevent interpreter shutdown (e.g., they SHOULD be daemon threads). Because the standard `ThreadPoolExecutor` does not expose a `daemon` parameter directly, implementations MAY use a custom thread factory that creates daemon threads, or they MAY rely on the fact that the pool is not explicitly shut down and threads will be terminated abruptly on exit (which is acceptable for short‑lived operations).
 - The pool MUST have a bounded work queue with a configurable maximum size (default 1000). If the queue is full, submitting a new task MUST block or raise an exception; implementations MAY use a `Queue` with `maxsize` and a timeout.
 - The executor MUST be created as a **module‑level singleton** shared by all instances of that adapter to avoid unbounded thread creation.
-- On interpreter exit, daemon threads are abruptly terminated; this is acceptable because the pool only runs short‑lived vector calls, and abrupt termination will not leak resources (the underlying translator calls are expected to handle cancellation).
 - No explicit shutdown of the pool is required, but implementations MAY register an `atexit` handler to attempt graceful shutdown (non‑normative).
 
 ---
 
 ## 5. Shared Utility Layer
+
+This section contains reusable helpers that implement the behaviors mandated in §4. Adapters SHOULD use these utilities or provide equivalent implementations.
 
 ### 5.1. Validation Utilities
 
@@ -1127,8 +1093,54 @@ def mmr_select_indices(
     """
     Standard MMR selection implementation.
     """
-    # Implementation details...
-    pass
+    if k <= 0 or not candidate_matches:
+        return []
+    
+    if lambda_mult >= 1.0:
+        # Pure relevance
+        scores = [c.score for c in candidate_matches]
+        return sorted(range(len(candidate_matches)), key=lambda i: scores[i], reverse=True)[:k]
+    
+    scores = [c.score for c in candidate_matches]
+    max_score = max(scores) if scores else 1.0
+    norm_scores = [s / max_score for s in scores]
+    
+    # Similarity cache
+    sim_cache = {}
+    def sim(i, j):
+        key = (min(i,j), max(i,j))
+        if key not in sim_cache:
+            a = candidate_matches[i].vector.vector
+            b = candidate_matches[j].vector.vector
+            sim_cache[key] = similarity_fn(a, b) if a and b else 0.0
+        return sim_cache[key]
+    
+    selected = []
+    candidates_set = set(range(len(candidate_matches)))
+    
+    # Pick first by relevance
+    first = max(candidates_set, key=lambda i: norm_scores[i])
+    selected.append(first)
+    candidates_set.remove(first)
+    
+    while candidates_set and len(selected) < k:
+        best_idx = None
+        best_score = -float('inf')
+        
+        for i in candidates_set:
+            rel = norm_scores[i]
+            max_sim = max(sim(i, j) for j in selected)
+            mmr = lambda_mult * rel - (1 - lambda_mult) * max_sim
+            if mmr > best_score:
+                best_score = mmr
+                best_idx = i
+        
+        if best_idx is None:
+            break
+        selected.append(best_idx)
+        candidates_set.remove(best_idx)
+    
+    return selected
 ```
 
 ---
@@ -1207,18 +1219,24 @@ Adapters SHOULD:
 - Include `throttle_scope` in error details
 - Propagate backpressure hints from underlying provider
 
-### 6.7. Vector Operation Determinism (MUST)
+### 6.7. Vector Operation Determinism (REVISED)
 
-All adapters MUST produce the same vector operation results for the same inputs, **regardless of which framework adapter is used**. This ensures that applications can switch frameworks without changing vector behavior.
+Adapters MUST NOT introduce additional non‑determinism beyond what the underlying vector provider exhibits. For deterministic backends, adapters MUST preserve deterministic behavior (no extra randomness, stable ordering for equal scores, etc.).
 
-- **Query equivalence:** The same query string and top‑k MUST return identical results (document order, scores, metadata) across all adapters.
-- **Mutation equivalence:** The same texts and metadata upserted MUST produce identical state changes across all adapters.
+- **Query equivalence:** For the same query string and top‑k, adapters MUST return results that are consistent with the underlying provider's output. If the provider itself is non‑deterministic (e.g., due to approximate nearest neighbor algorithms), adapters MUST NOT add extra randomness that could further vary results.
+
+- **Mutation equivalence:** The same texts and metadata upserted MUST produce identical state changes across all adapters, subject to any provider‑specific eventual consistency guarantees.
+
 - **Error equivalence:** The same invalid inputs MUST produce equivalent error types and codes across all adapters.
 
-**Streaming chunk equivalence:** For streaming similarity search, adapters MUST produce semantically equivalent results regardless of chunk boundaries. Chunk boundaries MAY differ, but the concatenation of yielded documents MUST be identical across adapters.
-
 **Documentation Requirement for Non‑Deterministic Providers:**  
-If the underlying vector provider is known to be non‑deterministic (e.g., due to approximate nearest neighbor algorithms), the adapter MUST include a clear statement in its public documentation explaining the source of non‑determinism and its practical impact.
+If the underlying vector provider is known to be non‑deterministic (e.g., approximate nearest neighbor, load‑balanced replicas), the adapter MUST include a clear statement in its public documentation explaining:
+- The name of the provider and the source of non‑determinism.
+- Whether the non‑determinism affects query results, mutation visibility, or only metadata (e.g., timing).
+- Any configuration options that can mitigate non‑determinism (e.g., read‑after‑write consistency, increasing `k` to reduce variance).
+- The practical impact on applications (e.g., retrieval may vary slightly between runs, mutations may not be immediately visible).
+
+**Streaming chunk equivalence:** For streaming similarity search, adapters MUST produce results that are semantically equivalent to the non‑streaming query result (same set of documents and scores) regardless of chunk boundaries. Chunk boundaries MAY differ, but the concatenation of yielded documents MUST be identical across adapters when the provider is deterministic.
 
 ### 6.8. Translator Shim Equivalence (MUST)
 
@@ -1233,30 +1251,11 @@ The conformance test suite includes tests that verify equivalence using mock vec
 
 ### 6.9. Single Source of Truth Pattern (SHOULD)
 
-For complex request shapes (upsert, query), adapters SHOULD implement shared request builders:
-
-```python
-def _build_upsert_request(
-    self,
-    texts: List[str],
-    embeddings: Embeddings,
-    metadatas: List[Metadata],
-    ids: List[str],
-    namespace: Optional[str],
-) -> List[Mapping[str, Any]]:
-    """Single source of truth for upsert request shape."""
-    # ... implementation ...
-
-def _build_query_request(...) -> Mapping[str, Any]:
-    """Single source of truth for query request shape."""
-    # ... implementation ...
-```
-
-This prevents drift between sync and async implementations as specs evolve.
+For complex request shapes (upsert, query), adapters SHOULD implement shared request builders (see §B.6). This prevents drift between sync and async implementations as specs evolve.
 
 ### 6.10. Delete Operation Helper Pattern
 
-All adapters implement a shared helper for delete operation filter/ID selection:
+All adapters implement a shared helper for delete operation filter/ID selection (see §B.5).
 
 ```python
 def _select_filter_or_ids(
@@ -1514,6 +1513,7 @@ def _run_blocking_in_crewai_tool_thread(fn: Callable[[], T]) -> T:
     global _CREWAI_TOOL_BRIDGE_EXECUTOR
     with _CREWAI_TOOL_BRIDGE_EXECUTOR_LOCK:
         if _CREWAI_TOOL_BRIDGE_EXECUTOR is None:
+            # Use a custom thread factory for daemon threads if needed
             _CREWAI_TOOL_BRIDGE_EXECUTOR = ThreadPoolExecutor(
                 max_workers=4,
                 thread_name_prefix="corpus-crewai-tool",
@@ -1792,11 +1792,11 @@ def _build_upsert_request(
     namespace: Optional[str],
 ) -> List[Mapping[str, Any]]:
     """Convert nodes to Corpus upsert documents."""
-    # ... implementation ...
+    # Implementation details (see §B.6)
 
 def _build_query_request(...) -> Mapping[str, Any]:
     """Build query request from VectorStoreQuery."""
-    # ... implementation ...
+    # Implementation details (see §B.6)
 ```
 
 ### 10.5. Integration Helpers
@@ -2431,18 +2431,20 @@ async for chunk in aiter:
 ### B.4. Resource Cleanup Patterns
 
 ```python
-# Sync cleanup with idempotency
+# Sync cleanup with idempotency and lock
 def close(self):
-    if self._closed:
-        return
-    self._closed = True
+    with self._close_lock:
+        if self._closed:
+            return
+        self._closed = True
     _maybe_close_sync(self._resource)
 
-# Async cleanup with fallback
+# Async cleanup with fallback and lock
 async def aclose(self):
-    if self._aclosed:
-        return
-    self._aclosed = True
+    async with self._aclose_lock:
+        if self._aclosed:
+            return
+        self._aclosed = True
     
     if hasattr(self._resource, "aclose"):
         await self._resource.aclose()
