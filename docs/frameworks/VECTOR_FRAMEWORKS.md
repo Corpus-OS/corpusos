@@ -1127,7 +1127,8 @@ def mmr_select_indices(
     """
     Standard MMR selection implementation.
     """
-    # ... implementation ...
+    # Implementation details...
+    pass
 ```
 
 ---
