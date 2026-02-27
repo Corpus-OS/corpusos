@@ -1,6 +1,6 @@
 # GRAPH FRAMEWORK ADAPTERS SPECIFICATION (FINAL v1.1.0)
 
-**specification_version:** `1.1.0`  
+**specification_version:** `1.0.0`  
 **protocol_version:** `1.0.0`  
 
 ---
