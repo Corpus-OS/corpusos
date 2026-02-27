@@ -528,30 +528,35 @@ def _ensure_not_in_event_loop(api_name: str) -> None:
 
 The error message MUST include the error code `SYNC_WRAPPER_CALLED_IN_EVENT_LOOP` in the message for observability.
 
+```markdown
 ### 4.9. Async Streaming Support (MUST)
 
-All adapters MUST support async streaming methods that produce semantically equivalent results for the same input and model. Chunk boundaries MAY differ across implementations as long as:
-	•	Chunk order is preserved.
-	•	Each chunk’s internal structure and invariants are preserved (no chunk reordering, duplication, or loss).
+All async streaming methods MUST produce **semantically equivalent results** for the same input and model. Chunk boundaries MAY differ across implementations as long as:
 
-All adapters MUST call the shared translator streaming primitive (e.g., GraphTranslator.arun_query_stream(...) or the equivalent for embeddings/LLMs). The translator is the normative source of truth for:
-	•	Returning an AsyncIterator (or awaitable that resolves to an AsyncIterator).
-	•	Ensuring chunk shape and invariants for the protocol.
+- Chunk **order** is preserved.
+- Each chunk's internal structure and invariants are preserved (no reordering, duplication, or loss).
 
-Adapters MAY add an extra normalization layer on top of the translator. This adapter-level normalization is:
-	•	RECOMMENDED for LlamaIndex and Semantic Kernel.
-	•	OPTIONAL (and MAY be omitted) for AutoGen, CrewAI, and LangChain.
+All adapters MUST call the shared translator streaming primitive (for example, `GraphTranslator.arun_query_stream(...)` or the corresponding embedding/LLM streaming API). The translator is the **normative source of truth** for:
 
-⸻
+- Returning an `AsyncIterator` (or an awaitable that resolves to an `AsyncIterator`).
+- Ensuring chunk shape and protocol invariants.
 
-Option A: Adapter-Level Normalization
-(RECOMMENDED for LlamaIndex, Semantic Kernel)
+Adapters MAY add an additional normalization layer on top of the translator. This **adapter-level normalization** is:
 
-Adapters that surface streaming as a first-class, strongly-typed API (e.g., LlamaIndex, Semantic Kernel) SHOULD perform an explicit normalization step to guard against unexpected shapes, even if the translator already has its own contract.
+- **RECOMMENDED** for LlamaIndex and Semantic Kernel.
+- **OPTIONAL** (and MAY be omitted) for AutoGen, CrewAI, and LangChain.
 
+---
+
+#### 4.9.1. Option A — Adapter-Level Normalization (RECOMMENDED for LlamaIndex, Semantic Kernel)
+
+Adapters that surface streaming as a first-class, strongly-typed API (for example, LlamaIndex, Semantic Kernel) SHOULD perform an explicit normalization step to guard against unexpected shapes, even if the translator already enforces its own contract.
+
+```python
 def _is_async_iterator(obj: Any) -> bool:
     """Return True if object implements AsyncIterator protocol."""
     return hasattr(obj, "__aiter__") and hasattr(obj, "__anext__")
+
 
 def _normalize_async_iterator(aiter_or_awaitable: Any) -> Any:
     """
@@ -562,7 +567,7 @@ def _normalize_async_iterator(aiter_or_awaitable: Any) -> Any:
         - The AsyncIterator unchanged, if it implements __aiter__/__anext__.
 
     Raises:
-        TypeError with BAD_ASYNC_ITERATOR_SHAPE if the shape is invalid.
+        TypeError with BAD_ASYNC_ITERATOR_SHAPE for invalid shapes.
     """
     if inspect.isawaitable(aiter_or_awaitable):
         return aiter_or_awaitable
@@ -574,7 +579,8 @@ def _normalize_async_iterator(aiter_or_awaitable: Any) -> Any:
         f"[{ErrorCodes.BAD_ASYNC_ITERATOR_SHAPE}]"
     )
 
-async def astream_query(self, ...) -> AsyncIterator[Chunk]:
+
+async def astream_query(self, ...):
     # ... setup ...
     aiter_or_awaitable = self._translator.arun_query_stream(...)
     normalized = _normalize_async_iterator(aiter_or_awaitable)
@@ -591,43 +597,33 @@ async def astream_query(self, ...) -> AsyncIterator[Chunk]:
 
     async for chunk in aiter:
         yield chunk
+```
 
-Rationale (Option A):
-	•	LlamaIndex and Semantic Kernel often plug directly into application code that assumes strict typing and clear failure modes.
-	•	A small, explicit normalization layer gives clearer, framework-specific error codes (BAD_ASYNC_ITERATOR_SHAPE) if something upstream regresses, while still relying on the translator for the core contract.
+**Rationale (Option A):**
+- LlamaIndex and Semantic Kernel often plug directly into application code that assumes strict typing and clear failure modes.
+- A small, explicit normalization layer yields clearer, framework-specific error codes (`BAD_ASYNC_ITERATOR_SHAPE`) if something upstream regresses, while still relying on the translator for the core streaming contract.
 
-⸻
+---
 
-Option B: Translator-Level Normalization Only
-(Acceptable for AutoGen, CrewAI, LangChain)
+#### 4.9.2. Option B — Translator-Level Normalization Only (ACCEPTABLE for AutoGen, CrewAI, LangChain)
 
-Adapters that treat streaming primarily as an internal mechanism (e.g., AutoGen, CrewAI, LangChain) MAY rely solely on the translator’s contract and skip explicit adapter-level normalization:
+If the adapter trusts that `GraphTranslator.arun_query_stream()` (or the corresponding streaming primitive) always returns a valid `AsyncIterator` (or an awaitable resolving to one), it MAY skip explicit adapter-level normalization and directly iterate:
 
-async def astream_query(self, ...) -> AsyncIterator[Chunk]:
-    # ... setup ...
-    aiter = self._translator.arun_query_stream(...)
-    # Translator is responsible for returning a valid AsyncIterator.
-    async for chunk in aiter:
+```python
+async def astream_query(self, ...):
+    async for chunk in self._translator.arun_query_stream(...):
         yield chunk
+```
 
 In this mode:
-	•	The adapter trusts that arun_query_stream(...) returns a valid AsyncIterator.
-	•	Any shape violations or protocol regressions still surface via the error-context decorators, which MUST capture and enrich exceptions with framework, operation, and context metadata.
+- The translator remains responsible for enforcing the streaming contract.
+- Any exceptions arising from invalid shapes are still captured and enriched by the shared error-context decorators surrounding the streaming method.
 
-Rationale (Option B):
-	•	AutoGen, CrewAI, and LangChain generally consume streaming as a lower-level detail, and the translator already centralizes shape guarantees.
-	•	Avoiding an extra adapter-level normalization layer keeps these adapters simpler, while still benefiting from the shared translator contract and error-context instrumentation.
+**Rationale (Option B):**
+- AutoGen, CrewAI, and LangChain streaming APIs are typically closer to "internal plumbing," where additional type guards in the adapter provide less marginal value compared to LlamaIndex/Semantic Kernel public surfaces.
+- Relying solely on translator-level normalization keeps adapter code simpler while still benefiting from centralized contract enforcement and error-context enrichment.
+```
 
-⸻
-
-Framework-Specific Guidance (Normative):
-	•	All adapters:
-MUST call the translator’s async streaming primitive and MUST preserve ordering and chunk integrity in their own async streaming APIs.
-	•	LlamaIndex, Semantic Kernel:
-SHOULD implement Option A (adapter-level normalization) and use BAD_ASYNC_ITERATOR_SHAPE for invalid shapes.
-	•	AutoGen, CrewAI, LangChain:
-MAY implement Option B (translator-only normalization) and directly async for over the translator’s result, relying on the translator and error-context decorators to surface any shape issues.
-### 4.10. Query Building Semantics (MUST)
 
 All adapters MUST implement a consistent `_build_raw_query()` method:
 
