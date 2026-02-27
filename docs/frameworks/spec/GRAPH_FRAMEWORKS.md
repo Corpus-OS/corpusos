@@ -528,7 +528,6 @@ def _ensure_not_in_event_loop(api_name: str) -> None:
 
 The error message MUST include the error code `SYNC_WRAPPER_CALLED_IN_EVENT_LOOP` in the message for observability.
 
-```markdown
 ### 4.9. Async Streaming Support (MUST)
 
 All async streaming methods MUST produce **semantically equivalent results** for the same input and model. Chunk boundaries MAY differ across implementations as long as:
@@ -545,8 +544,6 @@ Adapters MAY add an additional normalization layer on top of the translator. Thi
 
 - **RECOMMENDED** for LlamaIndex and Semantic Kernel.
 - **OPTIONAL** (and MAY be omitted) for AutoGen, CrewAI, and LangChain.
-
----
 
 #### 4.9.1. Option A — Adapter-Level Normalization (RECOMMENDED for LlamaIndex, Semantic Kernel)
 
@@ -602,8 +599,6 @@ async def astream_query(self, ...):
 **Rationale (Option A):**
 - LlamaIndex and Semantic Kernel often plug directly into application code that assumes strict typing and clear failure modes.
 - A small, explicit normalization layer yields clearer, framework-specific error codes (`BAD_ASYNC_ITERATOR_SHAPE`) if something upstream regresses, while still relying on the translator for the core streaming contract.
-
----
 
 #### 4.9.2. Option B — Translator-Level Normalization Only (ACCEPTABLE for AutoGen, CrewAI, LangChain)
 
