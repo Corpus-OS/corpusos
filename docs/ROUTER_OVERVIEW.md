@@ -399,17 +399,15 @@ Start with Corpus Protocol from day one. Build adapters using the actual base cl
 
 ## 🤝 Next Steps
 
-**Evaluate Your Potential Savings:** [https://corpus.io/roi-calculator](https://corpus.io/roi-calculator)  
-**Migration Assessment:** [https://corpus.io/migration-assessment](https://corpus.io/migration-assessment)  
 **Try the SDK:** `pip install corpus_sdk`
 
 **Contact:**
-- **Website:** [https://corpus.io](https://corpus.io)
-- **Documentation:** [https://docs.corpus.io/router](https://docs.corpus.io/router)
+- **Website:** [https://corpusos.com](https://corpusos.com)
+- **Documentation:** [https://docs.corpusos.com/router](https://docs.corpusos.com/router)
 - **GitHub:** [https://github.com/corpus-io](https://github.com/corpus-io)
-- **Sales:** sales@corpus.io
-- **Support:** support@corpus.io
+- **Sales:** sales@corpusos.com
+- **Support:** support@corpusos.com
 
 ---
 
-*Corpus Router v1.0 • [https://corpus.io](https://corpus.io) • © 2024 Corpus Technologies*
+*Corpus Router v1.0 • [https://corpusos.com](https://corpusos.com) • © 2024 Corpus Technologies*
