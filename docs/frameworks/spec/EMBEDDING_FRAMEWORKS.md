@@ -238,8 +238,8 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 
 **Example:**
 
-* "The adapter MUST reject non-string inputs" indicates a strict requirement that must be implemented and verified.
-* "The adapter SHOULD log warnings for large batches" indicates a recommendation that may be deviated from only with good reason.
+* The adapter MUST reject non-string inputs" indicates a strict requirement that must be implemented and verified.
+* The adapter SHOULD log warnings for large batches" indicates a recommendation that may be deviated from only with good reason.
 
 **Justified Deviation Example:**
 A developer might choose to disable the `strict_text_types` validation (which is a SHOULD-level recommendation) in a controlled environment where they have verified that all inputs are strings, and where the performance cost of validation is significant. This deviation MUST be documented in the code, explaining why it is safe and what assumptions are being made. The adapter MUST still provide a way to re-enable strict validation (e.g., via a configuration flag) because the default behavior is RECOMMENDED.
