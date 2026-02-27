@@ -905,13 +905,53 @@ Adapters SHOULD:
 
 ### 6.7. LLM Determinism (MUST)
 
-All adapters MUST produce the same completion results for the same inputs, **regardless of which framework adapter is used**. This ensures that applications can switch frameworks without changing LLM behavior.
+This section defines what “deterministic” means in the context of LLM adapters and what guarantees apply in deterministic vs. non-deterministic configurations.
 
-- **Completion equivalence:** The same messages and sampling parameters MUST return identical completion text and token usage (within floating‑point tolerance).
-- **Streaming equivalence:** The concatenation of all text chunks from a streaming completion MUST be exactly equal (string equality) to the text content of the non‑streaming completion result, for the same input messages and sampling parameters. This means that providers that chunk at different token boundaries (e.g., word vs. subword) must still reconstruct the identical final text. The adapter MUST NOT modify or normalize the streamed text beyond what the underlying translator provides.
-- **Token counting equivalence:** The same messages MUST return identical token counts across all adapters.
+#### 6.7.1 Deterministic vs. Non-Deterministic Configurations
 
-**Floating point tolerance:** For the same input messages and model, output logits/probabilities MAY vary within 1e‑6 due to numerical differences, but final text MUST be identical.
+* **Deterministic configuration** (for the underlying LLM adapter) means:
+
+  * Sampling parameters are set to deterministic values (for example, `temperature = 0` and no stochastic sampling, or a fixed random seed where supported), **and**
+  * The backing provider is configured such that it does not introduce additional randomness or non-determinism (for example, a single model endpoint with deterministic decoding).
+* **Non-deterministic configuration** means:
+
+  * Any configuration where the provider or adapter can legitimately return different results for the same input (for example, `temperature > 0`, nucleus sampling, approximate backends, sharded / load-balanced deployments, etc.).
+
+#### 6.7.2 Adapter Requirements in Deterministic Configurations (MUST)
+
+In deterministic configurations, adapters:
+
+* MUST NOT introduce any additional non-determinism beyond what the underlying `LLMProtocolV1` implementation would produce for the same inputs.
+* MUST produce **observationally equivalent** results across frameworks when given:
+
+  * The same normalized messages,
+  * The same sampling parameters (model, temperature, max_tokens, top_p, stop sequences, etc.), and
+  * The same operation type (completion vs. streaming completion).
+
+Concretely:
+
+* **Completion equivalence:** For the same input messages and sampling parameters, the **final response text** and **token usage counts** returned via different framework adapters MUST match those returned by the underlying `LLMProtocolV1` implementation (within normal floating-point tolerance for usage fields).
+* **Streaming equivalence:** For streaming operations, the concatenation of all streamed text chunks MUST be identical to the non-streaming completion text that would be returned for the same inputs. Chunk boundaries MAY differ; adapters MUST NOT drop, duplicate, or mutate text relative to the underlying translator output.
+
+#### 6.7.3 Adapter Requirements in Non-Deterministic Configurations (MUST)
+
+In non-deterministic configurations, adapters:
+
+* MUST still NOT introduce any additional source of randomness or non-determinism (for example, they MUST NOT randomly reorder messages, alter sampling parameters, or post-process output in a way that changes the effective distribution of responses).
+* MUST ensure that, for a fixed `LLMProtocolV1` implementation and configuration, different framework adapters are **distribution-equivalent**:
+
+  * Given the same sequence of normalized messages and sampling parameters, the statistical distribution of generated responses observed over many runs MUST match that of the underlying adapter (up to sampling noise), even if individual runs differ.
+* MUST ensure that streaming vs. non-streaming behavior remains consistent with the underlying translator:
+
+  * Streaming MUST yield exactly the text produced by the translator, in the same order and without modification, even when the underlying provider itself is non-deterministic.
+
+#### 6.7.4 Token Counting Equivalence (MUST)
+
+Regardless of deterministic or non-deterministic configuration, adapters:
+
+* MUST call a single shared token counting implementation (`LLMTranslator.count_tokens_for_messages()` or equivalent).
+* MUST return identical token counts for the same normalized messages, model, and context across all framework adapters.
+* MUST treat token counts as a pure, deterministic function of (messages, model, context); token counting MUST NOT depend on any stochastic sampling behavior.
 
 ### 6.8. Translator Shim Equivalence (MUST)
 
