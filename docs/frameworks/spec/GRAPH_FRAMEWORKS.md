@@ -530,13 +530,25 @@ The error message MUST include the error code `SYNC_WRAPPER_CALLED_IN_EVENT_LOOP
 
 ### 4.9. Async Streaming Support (MUST)
 
-All async streaming methods MUST produce semantically equivalent results; chunk boundaries MAY differ across implementations as long as ordering and element integrity are preserved.
+All adapters MUST support async streaming methods that produce semantically equivalent results for the same input and model. Chunk boundaries MAY differ across implementations as long as:
+	•	Chunk order is preserved.
+	•	Each chunk’s internal structure and invariants are preserved (no chunk reordering, duplication, or loss).
 
-Adapters MAY implement their own normalization or rely on the translator to provide consistent behavior.
+All adapters MUST call the shared translator streaming primitive (e.g., GraphTranslator.arun_query_stream(...) or the equivalent for embeddings/LLMs). The translator is the normative source of truth for:
+	•	Returning an AsyncIterator (or awaitable that resolves to an AsyncIterator).
+	•	Ensuring chunk shape and invariants for the protocol.
 
-**Option A: Adapter-Level Normalization (RECOMMENDED for LlamaIndex, Semantic Kernel)**
+Adapters MAY add an extra normalization layer on top of the translator. This adapter-level normalization is:
+	•	RECOMMENDED for LlamaIndex and Semantic Kernel.
+	•	OPTIONAL (and MAY be omitted) for AutoGen, CrewAI, and LangChain.
 
-```python
+⸻
+
+Option A: Adapter-Level Normalization
+(RECOMMENDED for LlamaIndex, Semantic Kernel)
+
+Adapters that surface streaming as a first-class, strongly-typed API (e.g., LlamaIndex, Semantic Kernel) SHOULD perform an explicit normalization step to guard against unexpected shapes, even if the translator already has its own contract.
+
 def _is_async_iterator(obj: Any) -> bool:
     """Return True if object implements AsyncIterator protocol."""
     return hasattr(obj, "__aiter__") and hasattr(obj, "__anext__")
@@ -544,43 +556,77 @@ def _is_async_iterator(obj: Any) -> bool:
 def _normalize_async_iterator(aiter_or_awaitable: Any) -> Any:
     """
     Normalize either AsyncIterator or awaitable→AsyncIterator.
-    
-    Returns awaitable unchanged, AsyncIterator unchanged.
-    May raise TypeError with BAD_ASYNC_ITERATOR_SHAPE for invalid shapes.
+
+    Returns:
+        - The awaitable unchanged, if `inspect.isawaitable(...)` is True.
+        - The AsyncIterator unchanged, if it implements __aiter__/__anext__.
+
+    Raises:
+        TypeError with BAD_ASYNC_ITERATOR_SHAPE if the shape is invalid.
     """
     if inspect.isawaitable(aiter_or_awaitable):
         return aiter_or_awaitable
     if _is_async_iterator(aiter_or_awaitable):
         return aiter_or_awaitable
-    
+
     raise TypeError(
         f"Expected AsyncIterator or awaitable; got {type(aiter_or_awaitable).__name__} "
         f"[{ErrorCodes.BAD_ASYNC_ITERATOR_SHAPE}]"
     )
 
-async def astream_query(self, ...):
+async def astream_query(self, ...) -> AsyncIterator[Chunk]:
     # ... setup ...
     aiter_or_awaitable = self._translator.arun_query_stream(...)
     normalized = _normalize_async_iterator(aiter_or_awaitable)
-    
+
     if inspect.isawaitable(normalized):
         aiter = await normalized
     else:
         aiter = normalized
-    
+
     if not _is_async_iterator(aiter):
         raise TypeError(
             f"Resolved value not an AsyncIterator [{ErrorCodes.BAD_ASYNC_ITERATOR_SHAPE}]"
         )
-    
+
     async for chunk in aiter:
         yield chunk
-```
 
-**Option B: Translator-Level Normalization (acceptable for AutoGen, CrewAI, LangChain)**
+Rationale (Option A):
+	•	LlamaIndex and Semantic Kernel often plug directly into application code that assumes strict typing and clear failure modes.
+	•	A small, explicit normalization layer gives clearer, framework-specific error codes (BAD_ASYNC_ITERATOR_SHAPE) if something upstream regresses, while still relying on the translator for the core contract.
 
-If the adapter trusts that `GraphTranslator.arun_query_stream()` always returns a valid AsyncIterator, it MAY skip explicit normalization and directly iterate. However, any exceptions from invalid shapes will still be captured by error-context decorators.
+⸻
 
+Option B: Translator-Level Normalization Only
+(Acceptable for AutoGen, CrewAI, LangChain)
+
+Adapters that treat streaming primarily as an internal mechanism (e.g., AutoGen, CrewAI, LangChain) MAY rely solely on the translator’s contract and skip explicit adapter-level normalization:
+
+async def astream_query(self, ...) -> AsyncIterator[Chunk]:
+    # ... setup ...
+    aiter = self._translator.arun_query_stream(...)
+    # Translator is responsible for returning a valid AsyncIterator.
+    async for chunk in aiter:
+        yield chunk
+
+In this mode:
+	•	The adapter trusts that arun_query_stream(...) returns a valid AsyncIterator.
+	•	Any shape violations or protocol regressions still surface via the error-context decorators, which MUST capture and enrich exceptions with framework, operation, and context metadata.
+
+Rationale (Option B):
+	•	AutoGen, CrewAI, and LangChain generally consume streaming as a lower-level detail, and the translator already centralizes shape guarantees.
+	•	Avoiding an extra adapter-level normalization layer keeps these adapters simpler, while still benefiting from the shared translator contract and error-context instrumentation.
+
+⸻
+
+Framework-Specific Guidance (Normative):
+	•	All adapters:
+MUST call the translator’s async streaming primitive and MUST preserve ordering and chunk integrity in their own async streaming APIs.
+	•	LlamaIndex, Semantic Kernel:
+SHOULD implement Option A (adapter-level normalization) and use BAD_ASYNC_ITERATOR_SHAPE for invalid shapes.
+	•	AutoGen, CrewAI, LangChain:
+MAY implement Option B (translator-only normalization) and directly async for over the translator’s result, relying on the translator and error-context decorators to surface any shape issues.
 ### 4.10. Query Building Semantics (MUST)
 
 All adapters MUST implement a consistent `_build_raw_query()` method:
