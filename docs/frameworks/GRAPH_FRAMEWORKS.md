@@ -1,7 +1,7 @@
-# GRAPH FRAMEWORK ADAPTERS SPECIFICATION
+# GRAPH FRAMEWORK ADAPTERS SPECIFICATION (FINAL v1.1.0)
 
-**specification_version:** `1.0.0`   
-**protocol_version:** `1.0.0`   
+**specification_version:** `1.1.0`  
+**protocol_version:** `1.0.0`  
 
 ---
 
@@ -28,25 +28,25 @@ This specification defines the Corpus Framework Adapter Suite for Graph operatio
   * [4.4. Dynamic Context Extraction Pattern](#44-dynamic-context-extraction-pattern)
   * [4.5. Operation Context Building (MUST)](#45-operation-context-building-must)
   * [4.6. Thread-Safe Lazy Initialization (MUST)](#46-thread-safe-lazy-initialization-must)
-  * [4.7. Resource Cleanup Hierarchy (MUST)](#47-resource-cleanup-hierarchy-must)
+  * [4.7. Resource Cleanup - Best Effort (MUST)](#47-resource-cleanup---best-effort-must)
   * [4.8. Event Loop Guards (MUST)](#48-event-loop-guards-must)
-  * [4.9. Async Streaming Normalization (MUST)](#49-async-streaming-normalization-must)
+  * [4.9. Async Streaming Support (MUST)](#49-async-streaming-support-must)
   * [4.10. Query Building Semantics (MUST)](#410-query-building-semantics-must)
   * [4.11. Namespace Resolution (MUST)](#411-namespace-resolution-must)
   * [4.12. Dialect Fallback Behavior (SHOULD)](#412-dialect-fallback-behavior-should)
   * [4.13. SIEM-Safe Observability (MUST)](#413-siem-safe-observability-must)
   * [4.14. Testing Accommodations (INFORMATIVE)](#414-testing-accommodations-informative)
-  * [4.15. Adapter Lifecycle State Machine (MUST)](#415-adapter-lifecycle-state-machine-must)
-  * [4.16. Thread Pool Executors for Tool Bridging (MUST)](#416-thread-pool-executors-for-tool-bridging-must)
+  * [4.15. Adapter Lifecycle Summary (INFORMATIVE)](#415-adapter-lifecycle-summary-informative)
+  * [4.16. Thread Pool Executors for Tool Bridging (CONDITIONAL SHOULD)](#416-thread-pool-executors-for-tool-bridging-conditional-should)
 * [5. Shared Utility Layer](#5-shared-utility-layer)
   * [5.1. Validation Utilities](#51-validation-utilities)
     * [5.1.1. Query Validation](#511-query-validation)
     * [5.1.2. Batch Operation Validation](#512-batch-operation-validation)
     * [5.1.3. Upsert Nodes Spec Validation](#513-upsert-nodes-spec-validation)
     * [5.1.4. Result Type Validation](#514-result-type-validation)
-    * [5.1.5. Parameter Coercion for Tool Inputs](#515-parameter-coercion-for-tool-inputs)
+    * [5.1.5. Parameter Coercion for Tool Inputs (Framework-Specific)](#515-parameter-coercion-for-tool-inputs-framework-specific)
   * [5.2. Snapshot Utilities](#52-snapshot-utilities)
-  * [5.3. Operation Context Detection](#53-operation-context-detection)
+  * [5.3. Operation Context Detection (Heuristic)](#53-operation-context-detection-heuristic)
   * [5.4. Async Iterator Detection & Normalization](#54-async-iterator-detection--normalization)
   * [5.5. Resource Cleanup Helpers](#55-resource-cleanup-helpers)
   * [5.6. Error Context Decorator Factory](#56-error-context-decorator-factory)
@@ -55,13 +55,13 @@ This specification defines the Corpus Framework Adapter Suite for Graph operatio
   * [6.1. Unified Error Taxonomy Integration](#61-unified-error-taxonomy-integration)
   * [6.2. Consistent Observability](#62-consistent-observability)
   * [6.3. Operation Context Propagation](#63-operation-context-propagation)
-  * [6.4. Idempotency Semantics](#64-idempotency-semantics)
+  * [6.4. Idempotency Key Propagation (MUST)](#64-idempotency-key-propagation-must)
   * [6.5. Partial Failure Reporting](#65-partial-failure-reporting)
   * [6.6. Backpressure Integration](#66-backpressure-integration)
   * [6.7. Graph Operation Determinism (MUST)](#67-graph-operation-determinism-must)
   * [6.8. Translator Shim Equivalence (MUST)](#68-translator-shim-equivalence-must)
   * [6.9. Single Source of Truth Pattern (SHOULD)](#69-single-source-of-truth-pattern-should)
-  * [6.10. Delete Operation Helper Pattern](#610-delete-operation-helper-pattern)
+  * [6.10. Delete Operation Validation Pattern](#610-delete-operation-validation-pattern)
 * [7. AutoGen Adapter Specification](#7-autogen-adapter-specification)
   * [7.1. Overview](#71-overview)
   * [7.2. Framework-Specific Challenges](#72-framework-specific-challenges)
@@ -164,9 +164,9 @@ This specification defines the Corpus Framework Adapter Suite for Graph operatio
 * [Appendix B — Code Pattern Catalog (Normative)](#appendix-b--code-pattern-catalog-normative)
   * [B.1. Context Building Patterns](#b1-context-building-patterns)
   * [B.2. Event Loop Safety Patterns](#b2-event-loop-safety-patterns)
-  * [B.3. Async Streaming Normalization Patterns](#b3-async-streaming-normalization-patterns)
+  * [B.3. Async Streaming Patterns](#b3-async-streaming-patterns)
   * [B.4. Resource Cleanup Patterns](#b4-resource-cleanup-patterns)
-  * [B.5. Delete Operation Helper Patterns](#b5-delete-operation-helper-patterns)
+  * [B.5. Delete Operation Validation Patterns](#b5-delete-operation-validation-patterns)
   * [B.6. Single Source of Truth Request Builders](#b6-single-source-of-truth-request-builders)
 * [Appendix C — End-to-End Usage Examples](#appendix-c--end-to-end-usage-examples)
   * [C.1. AutoGen Agent with Graph Tools](#c1-autogen-agent-with-graph-tools)
@@ -186,8 +186,8 @@ This specification defines the Corpus Framework Adapter Suite for Graph operatio
 
 The AI framework landscape has fragmented into five dominant orchestration layers—AutoGen for multi-agent systems, CrewAI for role-based agent teams, LangChain for chain-of-thought pipelines, LlamaIndex for RAG and indexing, and Semantic Kernel for enterprise AI integration. Each framework defines its own interface for graph operations with subtly different expectations:
 
-- **AutoGen** requires tool-based interfaces for agent graph access and struggles with async/sync boundaries in agent loops.
-- **CrewAI** expects graph operations attached to agents but provides no shared runtime context across agent executions.
+- **AutoGen** requires tool-based interfaces for agent graph access and uses fully async patterns.
+- **CrewAI** expects graph operations attached to agents but provides no shared runtime context across agent executions; tool parameters come from LLMs and require defensive handling.
 - **LangChain** defines tool interfaces and Runnable patterns but creates deadlock risks when sync methods are called from async contexts.
 - **LlamaIndex** implements `GraphStore` with specific expectations about triplet operations and callback propagation.
 - **Semantic Kernel** uses plugin-based architecture with context and settings objects that must be propagated to underlying operations.
@@ -200,13 +200,13 @@ The Corpus Framework Adapter Suite for Graph solves this by providing a single, 
 
 This specification defines five framework adapters for graph operations:
 
-1. **AutoGen Adapter** — Implements graph tool interfaces with FunctionTool wrappers, context extraction from conversation objects, and thread-pool bridging for event-loop safety.
+1. **AutoGen Adapter** — Implements graph tool interfaces with FunctionTool wrappers, context extraction from conversation objects, and fully async tool implementations (no thread pool needed).
 
-2. **CrewAI Adapter** — Implements BaseTool interfaces with context extraction from agent tasks, bounded thread-pool execution for sync-in-async safety, and JSON-safe snapshotting for tool outputs.
+2. **CrewAI Adapter** — Implements BaseTool interfaces with context extraction from agent tasks, bounded thread-pool execution for sync-in-async safety, defensive LLM parameter coercion, and JSON-safe snapshotting for tool outputs.
 
-3. **LangChain Adapter** — Implements BaseTool interfaces with config context extraction, event-loop detection, worker-thread fallback, and comprehensive validation for LLM-provided parameters.
+3. **LangChain Adapter** — Implements BaseTool interfaces with config context extraction, event-loop detection, worker-thread fallback, defensive parameter validation, and comprehensive validation for LLM-provided parameters.
 
-4. **LlamaIndex Adapter** — Implements `GraphStore` protocol with callback manager context propagation, Single Source of Truth request builders, and triplet operation mapping.
+4. **LlamaIndex Adapter** — Implements `GraphStore` protocol with callback manager context propagation, Single Source of Truth request builders, and triplet operation mapping. Includes RECOMMENDED strict validation for edge operations (id, src, dst, label, JSON properties); current implementation enforces at minimum non-null edges and presence of IDs.
 
 5. **Semantic Kernel Adapter** — Implements plugin architecture with context+settings translation, forward-compatible kwargs handling, and graceful fallback for capability methods.
 
@@ -216,9 +216,9 @@ All adapters share:
 - **Error normalization** — All exceptions are enriched with `attach_context()` using framework-specific error codes.
 - **Observability** — Dynamic context extraction captures operation types, namespaces, batch sizes, and routing fields.
 - **Streaming support** — Both sync and async streaming with robust iterator normalization.
-- **Resource management** — Sync/async context managers with proper cleanup hierarchy.
+- **Resource management** — Best-effort cleanup via sync/async context managers.
 - **Namespace resolution** — Consistent precedence: explicit args → spec.namespace → client defaults.
-- **Delete operation helpers** — Shared logic for filter/ID selection across all delete methods.
+- **Delete operation validation** — Shared pattern for requiring filter or non-empty ID list, with `BAD_ADAPTER_RESULT` error code and optional `INVALID_DELETE_SPEC` in message.
 
 ### 1.3. Design Philosophy
 
@@ -232,11 +232,15 @@ All adapters share:
 
 - **Async-Safe Sync Usage (MUST).** Sync APIs enforce guard rails preventing calls from inside active event loops. When bridging is required for tool integration, adapters use controlled worker-thread execution.
 
-- **Streaming Robustness (MUST).** Async streaming methods must handle both direct AsyncIterator returns and awaitable→AsyncIterator patterns from underlying translators, with post-resolution validation.
+- **Streaming Robustness (MUST).** Async streaming methods must produce semantically equivalent results; chunk boundaries MAY differ across implementations as long as ordering and element integrity are preserved.
+
+- **Defensive Parameter Handling (SHOULD).** For adapters that accept LLM-provided parameters (CrewAI, LangChain tools), numeric parameters SHOULD be coerced, clamped, and defaulted rather than raising exceptions.
 
 - **Single Source of Truth (SHOULD).** Complex request shapes (bulk vertices, traversal) should use shared builders to prevent drift between sync/async implementations.
 
-- **Production Hardening (MUST).** Thread-safe lazy initialization, resource cleanup hierarchies, SIEM-safe logging, and consistent namespace resolution are non-negotiable requirements.
+- **Best-Effort Resource Cleanup (SHOULD).** `close()` and `aclose()` provide best-effort cleanup but do not prevent subsequent operations. Clients SHOULD NOT rely on adapter behavior after close.
+
+- **Edge Validation Flexibility (SHOULD).** Edge upsert validation MAY vary by adapter; at minimum, adapters MUST validate non-null edges and presence of IDs. Stricter validation (src, dst, label, JSON properties) is RECOMMENDED but not required. LlamaIndex adapter aims for strict validation in future releases.
 
 ---
 
@@ -273,9 +277,11 @@ A developer might choose to disable strict validation in a controlled environmen
 
 **Single Source of Truth** — Pattern where shared request builders ensure sync/async implementations remain consistent.
 
-**Tool Bridge Executor** — Bounded thread pool used to execute sync graph calls from within async contexts in tool integrations.
+**Tool Bridge Executor** — Bounded thread pool used to execute sync graph calls from within async contexts in tool integrations (used by CrewAI and LangChain).
 
 **SIEM-Safe** — Observability that excludes PII, raw content, and tenant identifiers, using hashes and structural metadata instead.
+
+**Best-Effort Cleanup** — Resource cleanup that attempts to release resources but does not enforce a closed state; clients may continue using the adapter after cleanup calls.
 
 ---
 
@@ -386,7 +392,7 @@ def _build_ctx(self, *, framework_input=None, extra_context=None) -> Optional[Op
     
     - If translation fails, log warning and return None
     - Enrich attrs with framework and framework_version
-    - Use structural check (_looks_like_operation_context) to validate result
+    - Use heuristic check (_looks_like_operation_context) to validate result
     """
     extra = dict(extra_context or {})
     
@@ -408,12 +414,15 @@ def _build_ctx(self, *, framework_input=None, extra_context=None) -> Optional[Op
         logger.warning("Non-OperationContext returned; ignoring.")
         return None
     
-    # Enrich attrs with framework metadata
-    attrs = getattr(ctx_candidate, "attrs", {}) or {}
-    if isinstance(attrs, dict):
-        attrs.setdefault("framework", self._framework_name)
-        if self._framework_version:
-            attrs.setdefault("framework_version", self._framework_version)
+    # Enrich attrs with framework metadata (best-effort)
+    try:
+        attrs = getattr(ctx_candidate, "attrs", {}) or {}
+        if isinstance(attrs, dict):
+            attrs.setdefault("framework", self._framework_name)
+            if self._framework_version:
+                attrs.setdefault("framework_version", self._framework_version)
+    except Exception:
+        logger.debug("Failed to enrich OperationContext attrs", exc_info=True)
     
     return ctx_candidate
 ```
@@ -434,9 +443,9 @@ def _translator(self) -> GraphTranslator:
     )
 ```
 
-### 4.7. Resource Cleanup Hierarchy (MUST)
+### 4.7. Resource Cleanup - Best Effort (MUST)
 
-All adapters MUST implement both sync and async context managers with proper cleanup:
+All adapters MUST implement both sync and async context managers with best-effort cleanup:
 
 ```python
 def __enter__(self):
@@ -452,17 +461,33 @@ async def __aexit__(self, exc_type, exc, tb):
     await self.aclose()
 
 def close(self) -> None:
+    """
+    Best-effort synchronous cleanup.
+    
+    Note: This method does NOT prevent subsequent use of the adapter.
+    Clients SHOULD NOT rely on adapter behavior after close() is called.
+    """
     if self._closed:
         return
     self._closed = True
     
     if hasattr(self._graph, "close"):
         try:
-            self._graph.close()
+            result = self._graph.close()
+            # Handle case where close() incorrectly returns coroutine
+            if inspect.iscoroutine(result):
+                result.close()
+                logger.warning("Graph adapter has async-only close() - use aclose() for proper cleanup")
         except Exception:
             logger.debug("Failed to close graph adapter", exc_info=True)
 
 async def aclose(self) -> None:
+    """
+    Best-effort asynchronous cleanup.
+    
+    Note: This method does NOT prevent subsequent use of the adapter.
+    Clients SHOULD NOT rely on adapter behavior after aclose() is called.
+    """
     if self._aclosed:
         return
     self._aclosed = True
@@ -479,8 +504,7 @@ async def aclose(self) -> None:
         self.close()
 ```
 
-**Thread Safety of close():**  
-The `close()` and `aclose()` methods MUST be thread-safe and idempotent. If called concurrently from multiple threads, the cleanup must happen exactly once, and subsequent calls must have no effect. Implementations MUST use a lock to guard the cleanup logic and mark the instance as closed before releasing the lock.
+**Important:** `close()` and `aclose()` provide best-effort cleanup but do NOT enforce a closed state. Adapters MAY continue to function after cleanup calls, though this behavior is not guaranteed. Clients SHOULD NOT rely on adapter behavior after calling `close()` or `aclose()`.
 
 ### 4.8. Event Loop Guards (MUST)
 
@@ -498,13 +522,19 @@ def _ensure_not_in_event_loop(api_name: str) -> None:
     
     raise RuntimeError(
         f"{api_name}() cannot be called from an active event loop. "
-        f"Use a{api_name}() instead. [SYNC_WRAPPER_CALLED_IN_EVENT_LOOP]"
+        f"Use a{api_name}() instead. [{ErrorCodes.SYNC_WRAPPER_CALLED_IN_EVENT_LOOP}]"
     )
 ```
 
-### 4.9. Async Streaming Normalization (MUST)
+The error message MUST include the error code `SYNC_WRAPPER_CALLED_IN_EVENT_LOOP` in the message for observability.
 
-All async streaming methods MUST handle variations in translator return types:
+### 4.9. Async Streaming Support (MUST)
+
+All async streaming methods MUST produce semantically equivalent results; chunk boundaries MAY differ across implementations as long as ordering and element integrity are preserved.
+
+Adapters MAY implement their own normalization or rely on the translator to provide consistent behavior.
+
+**Option A: Adapter-Level Normalization (RECOMMENDED for LlamaIndex, Semantic Kernel)**
 
 ```python
 def _is_async_iterator(obj: Any) -> bool:
@@ -516,14 +546,17 @@ def _normalize_async_iterator(aiter_or_awaitable: Any) -> Any:
     Normalize either AsyncIterator or awaitable→AsyncIterator.
     
     Returns awaitable unchanged, AsyncIterator unchanged.
-    Raises TypeError for invalid shapes.
+    May raise TypeError with BAD_ASYNC_ITERATOR_SHAPE for invalid shapes.
     """
     if inspect.isawaitable(aiter_or_awaitable):
         return aiter_or_awaitable
     if _is_async_iterator(aiter_or_awaitable):
         return aiter_or_awaitable
     
-    raise TypeError(f"Expected AsyncIterator or awaitable; got {type(aiter_or_awaitable)}")
+    raise TypeError(
+        f"Expected AsyncIterator or awaitable; got {type(aiter_or_awaitable).__name__} "
+        f"[{ErrorCodes.BAD_ASYNC_ITERATOR_SHAPE}]"
+    )
 
 async def astream_query(self, ...):
     # ... setup ...
@@ -536,11 +569,17 @@ async def astream_query(self, ...):
         aiter = normalized
     
     if not _is_async_iterator(aiter):
-        raise TypeError("Resolved value not an AsyncIterator")
+        raise TypeError(
+            f"Resolved value not an AsyncIterator [{ErrorCodes.BAD_ASYNC_ITERATOR_SHAPE}]"
+        )
     
     async for chunk in aiter:
         yield chunk
 ```
+
+**Option B: Translator-Level Normalization (acceptable for AutoGen, CrewAI, LangChain)**
+
+If the adapter trusts that `GraphTranslator.arun_query_stream()` always returns a valid AsyncIterator, it MAY skip explicit normalization and directly iterate. However, any exceptions from invalid shapes will still be captured by error-context decorators.
 
 ### 4.10. Query Building Semantics (MUST)
 
@@ -590,8 +629,7 @@ def _build_raw_query(
     return raw
 ```
 
-**JSON Serializability Check (SHOULD):**  
-Adapters SHOULD perform a best-effort JSON serializability check on params and log a debug warning if serialization fails. This MUST NOT raise exceptions, as some adapters may support non-JSON serialization.
+**Parameter Type Handling:** The `dict(params or {})` conversion will naturally raise `TypeError` if `params` is not mapping-like. These errors will be caught by error-context decorators and do not require explicit validation.
 
 ### 4.11. Namespace Resolution (MUST)
 
@@ -638,7 +676,7 @@ All logging MUST:
 
 - Never log raw query text, parameters, or tenant identifiers
 - Use truncation for long strings and containers
-- Include `tenant_hash` instead of raw tenant
+- Include `tenant_hash` instead of raw tenant (when available in context)
 - Log operation completion with dimensions and latency
 
 **Truncation thresholds (Normative):**  
@@ -661,37 +699,27 @@ Adapters SHOULD support test injection:
 - Error codes are exposed for assertion
 - `_closed`/`_aclosed` flags are observable
 
-### 4.15. Adapter Lifecycle State Machine (MUST)
+### 4.15. Adapter Lifecycle Summary (INFORMATIVE)
 
-Each adapter instance MUST maintain a clear lifecycle with the following states and transitions:
+This section restates the lifecycle guidance from §4.7 in summary form:
 
-- **`UNINITIALIZED`** (initial state after `__init__`, before any lazy initialization)
-- **`INITIALIZED`** (after first use, lazy resources created)
-- **`CLOSED`** (after `close()` or `aclose()` is called)
+- Adapters track `_closed`/`_aclosed` flags for idempotent cleanup
+- `close()` and `aclose()` provide best-effort resource release
+- These methods do NOT prevent subsequent operations
+- Clients SHOULD NOT rely on adapter behavior after calling `close()` or `aclose()`
+- Multiple calls to `close()` or `aclose()` are idempotent and safe
 
-**Valid Transitions:**
-- `UNINITIALIZED` → `INITIALIZED`: automatically when any operation is first invoked.
-- `UNINITIALIZED` → `CLOSED`: via `close()` or `aclose()`.
-- `INITIALIZED` → `CLOSED`: via `close()` or `aclose()`.
-- `CLOSED` → (no transitions allowed; instance is dead).
+### 4.16. Thread Pool Executors for Tool Bridging (CONDITIONAL SHOULD)
 
-**Illegal States:**
-- Attempting any operation after `CLOSED` MUST raise `RuntimeError`.
-- Calling `close()` or `aclose()` multiple times is allowed and MUST be idempotent.
-- Calling `close()` from within an async context MUST raise `RuntimeError` (except in controlled tool bridge scenarios).
+For adapters that provide tool integration and need to bridge sync calls from async contexts (CrewAI, LangChain), any thread pool executor used SHOULD satisfy the following recommendations:
 
-**Partial Initialization Failure:**  
-If an exception occurs during `__init__` after some resources have been allocated (e.g., a lock created but validation fails), the adapter MUST clean up any successfully allocated resources before propagating the exception. Implementations SHOULD use a try/finally block or a context manager to ensure cleanup. After a failed `__init__`, the object is considered not constructed and MUST NOT be used; no lifecycle state is defined. Callers must ensure that if `__init__` raises, the object reference is discarded.
-
-### 4.16. Thread Pool Executors for Tool Bridging (MUST)
-
-For adapters that provide tool integration (AutoGen, CrewAI, LangChain), any thread pool executor used to bridge sync calls from async contexts MUST satisfy the following requirements:
-
-- The executor MUST be a **daemon** thread pool (`daemon=True`) so that it does not block interpreter shutdown.
-- The pool MUST have a bounded work queue with a configurable maximum size (default 1000). If the queue is full, submitting a new task MUST block or raise an exception; implementations MAY use a `Queue` with `maxsize` and a timeout.
-- The executor MUST be created as a **module‑level singleton** shared by all instances of that adapter to avoid unbounded thread creation.
+- The executor SHOULD be a **daemon** thread pool (`daemon=True`) so that it does not block interpreter shutdown.
+- The pool SHOULD have a bounded work queue to provide backpressure; implementations MAY use a custom executor with `queue=Queue(maxsize=…)` or accept that the default `ThreadPoolExecutor` uses an unbounded queue.
+- The executor MAY be created as a **module‑level singleton** shared by all instances of that adapter to avoid unbounded thread creation.
 - On interpreter exit, daemon threads are abruptly terminated; this is acceptable because the pool only runs short‑lived graph calls, and abrupt termination will not leak resources (the underlying translator calls are expected to handle cancellation).
 - No explicit shutdown of the pool is required, but implementations MAY register an `atexit` handler to attempt graceful shutdown (non‑normative).
+
+**Note:** The default `ThreadPoolExecutor` in Python uses an unbounded work queue. If backpressure is required, implementers should consider a custom executor with a bounded queue. AutoGen adapter uses fully async tools and does NOT require a thread pool executor.
 
 ---
 
@@ -768,9 +796,9 @@ def validate_graph_result_type(
     return result
 ```
 
-#### 5.1.5. Parameter Coercion for Tool Inputs
+#### 5.1.5. Parameter Coercion for Tool Inputs (Framework-Specific)
 
-The following functions MUST be used by adapters that accept LLM‑provided parameters (e.g., CrewAI, LangChain tools) to safely convert and bound numeric inputs.
+The following functions SHOULD be used by adapters that accept LLM‑provided parameters (CrewAI, LangChain tools) to safely convert and bound numeric inputs.
 
 ```python
 def coerce_bounded_positive_int(
@@ -821,6 +849,8 @@ def validated_max_chunks(value: Any, *, max_allowed: int = 100) -> int:
     )
 ```
 
+**Note:** AutoGen tools are fully async and MAY use simpler validation (e.g., `int(max_chunks)` with bounds checking) since parameters come from trusted sources.
+
 ### 5.2. Snapshot Utilities
 
 ```python
@@ -860,14 +890,18 @@ def _safe_snapshot(value: Any, *, max_items: int = 200, max_str: int = 5000) -> 
         return {"repr": repr(value)}
 ```
 
-### 5.3. Operation Context Detection
+### 5.3. Operation Context Detection (Heuristic)
 
 ```python
 def _looks_like_operation_context(obj: Any) -> bool:
     """
-    Structural check for OperationContext-like objects.
+    Heuristic check for OperationContext-like objects.
     
-    Requires attrs plus at least one of: to_dict, request_id, traceparent.
+    This is a best-effort structural check that MAY be liberal in what it accepts.
+    Implementations MAY use stricter checks (requiring attrs + one of to_dict/request_id/traceparent)
+    or looser checks (any of request_id, traceparent, tenant, attrs, to_dict).
+    
+    The exact heuristic is implementation-defined and MAY vary across adapters.
     """
     if obj is None:
         return False
@@ -878,12 +912,16 @@ def _looks_like_operation_context(obj: Any) -> bool:
     except TypeError:
         pass
     
-    has_attrs = hasattr(obj, "attrs")
-    has_to_dict = hasattr(obj, "to_dict")
-    has_request_id = hasattr(obj, "request_id")
-    has_traceparent = hasattr(obj, "traceparent")
+    # Example liberal heuristic (AutoGen, CrewAI, LangChain)
+    attrs = ("request_id", "traceparent", "tenant", "attrs", "to_dict")
+    return any(hasattr(obj, attr) for attr in attrs)
     
-    return has_attrs and (has_to_dict or has_request_id or has_traceparent)
+    # Example strict heuristic (LlamaIndex, Semantic Kernel)
+    # has_attrs = hasattr(obj, "attrs")
+    # has_to_dict = hasattr(obj, "to_dict")
+    # has_request_id = hasattr(obj, "request_id")
+    # has_traceparent = hasattr(obj, "traceparent")
+    # return has_attrs and (has_to_dict or has_request_id or has_traceparent)
 ```
 
 ### 5.4. Async Iterator Detection & Normalization
@@ -898,7 +936,7 @@ def _normalize_async_iterator(aiter_or_awaitable: Any) -> Any:
     Normalize AsyncIterator or awaitable→AsyncIterator.
     
     Returns awaitable unchanged, AsyncIterator unchanged.
-    Raises TypeError for invalid shapes.
+    May raise TypeError with BAD_ASYNC_ITERATOR_SHAPE for invalid shapes.
     """
     if inspect.isawaitable(aiter_or_awaitable):
         return aiter_or_awaitable
@@ -907,7 +945,7 @@ def _normalize_async_iterator(aiter_or_awaitable: Any) -> Any:
     
     raise TypeError(
         f"Expected AsyncIterator or awaitable; got {type(aiter_or_awaitable).__name__} "
-        f"[BAD_ASYNC_ITERATOR_SHAPE]"
+        f"[{ErrorCodes.BAD_ASYNC_ITERATOR_SHAPE}]"
     )
 ```
 
@@ -922,7 +960,10 @@ def _maybe_close_sync(obj: Any) -> None:
     close_fn = getattr(obj, "close", None)
     if callable(close_fn):
         try:
-            close_fn()
+            result = close_fn()
+            if inspect.iscoroutine(result):
+                result.close()
+                logger.warning("Object has async-only close() - use aclose()")
         except Exception:
             logger.debug("Failed to close object", exc_info=True)
 
@@ -1039,7 +1080,7 @@ except Exception as e:
 
 All adapters emit:
 - One metric per operation (including streaming)
-- Structured logs with `tenant_hash`, operation, namespace, latency
+- Structured logs with `tenant_hash` (when available), operation, namespace, latency
 - Distributed trace context via `traceparent`
 
 ### 6.3. Operation Context Propagation
@@ -1050,9 +1091,17 @@ Framework-specific context flows into `OperationContext` via translation helpers
 framework_context → context_from_framework() → OperationContext
 ```
 
-### 6.4. Idempotency Semantics
+### 6.4. Idempotency Key Propagation (MUST)
 
-When `idempotency_key` is provided in operation context, adapters MUST ensure exactly-once semantics for mutating operations (upserts, deletes). Read operations (query, streaming) are naturally idempotent.
+When an `idempotency_key` is provided in the operation context, adapters MUST propagate this key to the underlying translator and MUST NOT perform any client-side behavior (such as automatic retries) that could break the exactly-once semantics provided by the backend. The adapter itself does not guarantee exactly-once execution—that depends on the backend honoring the idempotency key.
+
+```python
+# Adapters MUST propagate the key and avoid duplicate-write behavior
+ctx = self._build_ctx(...)
+if ctx and ctx.idempotency_key:
+    # Pass through to translator; backend responsible for deduplication
+    result = self._translator.upsert_nodes(..., idempotency_key=ctx.idempotency_key)
+```
 
 ### 6.5. Partial Failure Reporting
 
@@ -1090,31 +1139,22 @@ Adapters SHOULD:
 
 ### 6.7. Graph Operation Determinism (MUST)
 
-All adapters MUST produce the same graph operation results for the same inputs, **regardless of which framework adapter is used**. This ensures that applications can switch frameworks without changing graph behavior.
+When backed by the same underlying graph adapter and translator configuration, all framework adapters MUST produce the same graph operation results for the same inputs, regardless of which framework adapter is used. This ensures that applications can switch frameworks without changing graph behavior, assuming identical backend configuration.
 
-- **Query equivalence:** The same query string and parameters MUST return identical results (row sets, structure) across all adapters.
-- **Mutation equivalence:** The same upsert/delete operations MUST produce identical state changes across all adapters.
-- **Error equivalence:** The same invalid inputs MUST produce equivalent error types and codes across all adapters.
+- **Query equivalence:** The same query string and parameters MUST return identical results (row sets, structure) across all adapters when using the same backend.
+- **Mutation equivalence:** The same upsert/delete operations MUST produce identical state changes across all adapters when using the same backend.
+- **Error equivalence:** The same invalid inputs MUST produce equivalent error types and codes across all adapters when using the same backend.
 
 **Streaming chunk equivalence:** For streaming graph operations (`stream_query` / `astream_query`), adapters MUST produce semantically equivalent results regardless of chunk boundaries. Two streaming results are considered semantically equivalent if the concatenation of all `QueryChunk` items from one adapter yields the same sequence of data elements (e.g., rows, edges, nodes) as the concatenation from another adapter, when given identical inputs. Chunk boundaries MAY differ; adapters MAY split the result stream into chunks arbitrarily, but each chunk MUST contain only complete data elements (no partial rows/edges) and the overall order MUST be preserved.
 
-**Documentation Requirement for Non-Deterministic Providers:**  
-If the underlying graph provider is known to be non-deterministic (e.g., due to eventual consistency, load balancing across replicas), the adapter MUST include a clear statement in its public documentation (e.g., class docstring, module-level documentation, or a separate documentation page) that explains:
-- The name of the provider and the source of non-determinism.
-- Whether the non-determinism affects query results, mutation visibility, or only metadata (e.g., timing).
-- Any configuration options that can mitigate non-determinism (e.g., read-after-write consistency, replica pinning).
-- The practical impact on applications (e.g., retrieval may vary slightly between runs, mutations may not be immediately visible).
-
 ### 6.8. Translator Shim Equivalence (MUST)
 
-The `GraphTranslator` and `GraphFrameworkTranslator` layers MUST ensure that observable behavior is **equivalent** regardless of which underlying graph adapter implementation is used. This means:
+The `GraphTranslator` and `GraphFrameworkTranslator` layers MUST ensure that observable behavior is **equivalent** regardless of which underlying graph adapter implementation is used, assuming identical configuration. This means:
 
 - Query results must have identical structure and content
 - Error types and codes must be consistent
-- Streaming chunk boundaries and content must match
+- Streaming chunk **content** must be semantically equivalent; chunk boundaries MAY differ as long as ordering and element integrity are preserved
 - Batch operation results must report successes/failures identically
-
-The conformance test suite includes tests that verify equivalence using mock graph adapters.
 
 ### 6.9. Single Source of Truth Pattern (SHOULD)
 
@@ -1146,12 +1186,12 @@ def _build_traversal_request(self, spec: GraphTraversalSpec) -> Mapping[str, Any
 
 This prevents drift between sync and async implementations as specs evolve.
 
-### 6.10. Delete Operation Helper Pattern
+### 6.10. Delete Operation Validation Pattern
 
-All adapters implement a shared helper for delete operation filter/ID selection:
+All adapters implement consistent validation for delete operations requiring either a filter or non-empty IDs:
 
 ```python
-def _select_filter_or_ids(
+def _validate_delete_spec(
     self,
     *,
     spec_filter: Any,
@@ -1159,11 +1199,11 @@ def _select_filter_or_ids(
     empty_message: str,
 ) -> Any:
     """
-    Select either filter or non-empty ID list for delete operations.
+    Validate delete spec has either filter or non-empty ID list.
     
-    - If filter is provided, return it
-    - Otherwise, materialize IDs and validate non-empty
-    - Raise BadRequest with empty_message if neither is valid
+    Returns the filter or materialized IDs.
+    Raises BadRequest with BAD_ADAPTER_RESULT if neither is provided.
+    The message SHOULD include [INVALID_DELETE_SPEC] for observability.
     """
     if spec_filter is not None:
         return spec_filter
@@ -1171,13 +1211,13 @@ def _select_filter_or_ids(
     ids = list(spec_ids or [])
     if not ids:
         raise BadRequest(
-            f"{empty_message} [{ErrorCodes.INVALID_DELETE_SPEC}]",
+            f"{empty_message} [INVALID_DELETE_SPEC]",
             code=ErrorCodes.BAD_ADAPTER_RESULT,
         )
     return ids
 ```
 
-This ensures consistent behavior across sync/async and nodes/edges variants.
+**Important:** The error code field MUST be `BAD_ADAPTER_RESULT`. The message SHOULD include `[INVALID_DELETE_SPEC]` for observability and log correlation.
 
 ---
 
@@ -1185,7 +1225,7 @@ This ensures consistent behavior across sync/async and nodes/edges variants.
 
 ### 7.1. Overview
 
-The AutoGen adapter exposes Corpus graph operations as AutoGen-friendly FunctionTool wrappers, enabling agent-based graph access. It solves the fundamental impedance mismatch between AutoGen's async agent runtime and synchronous graph operations.
+The AutoGen adapter exposes Corpus graph operations as AutoGen-friendly FunctionTool wrappers, enabling agent-based graph access. It provides fully async tools that integrate seamlessly with AutoGen's async agent runtime.
 
 ### 7.2. Framework-Specific Challenges
 
@@ -1193,8 +1233,8 @@ The AutoGen adapter exposes Corpus graph operations as AutoGen-friendly Function
 |-----------|----------|
 | AutoGen agents expect tool interfaces | `create_autogen_graph_tools()` produces FunctionTool wrappers |
 | Context must propagate from conversation objects | `core_ctx_from_autogen()` extracts OperationContext |
-| Tool execution may occur in async agent loops | Thread-pool bridge for sync graph calls |
 | Tool outputs must be JSON-serializable | `_json_safe_snapshot()` with truncation limits |
+| AutoGen uses fully async patterns | Tools are async only; no thread pool needed |
 
 ### 7.3. Data Types
 
@@ -1252,8 +1292,8 @@ def _build_ctx(
 ) -> Optional[OperationContext]:
     """Translate AutoGen conversation to OperationContext."""
     # Use core_ctx_from_autogen()
-    # Enrich with framework metadata
-    # Return None on failure (best-effort)
+    # Enrich with framework metadata (best-effort)
+    # Return None on failure
 ```
 
 #### 7.4.4. Operations
@@ -1275,8 +1315,9 @@ def create_autogen_graph_tools(
     Create AutoGen-native FunctionTool wrappers for graph operations.
     
     - Lazy imports AutoGen
-    - Creates async tools that bridge to sync client when needed
+    - Creates async tools (no sync variants needed)
     - Returns JSON-safe snapshots for tool compatibility
+    - Simple parameter validation (int conversion with bounds checks)
     """
 ```
 
@@ -1297,10 +1338,10 @@ class ErrorCodes:
     BAD_TRANSACTION_RESULT = "BAD_TRANSACTION_RESULT"
     BAD_ADAPTER_RESULT = "BAD_ADAPTER_RESULT"
     SYNC_WRAPPER_CALLED_IN_EVENT_LOOP = "SYNC_WRAPPER_CALLED_IN_EVENT_LOOP"
+    
+    # Validation codes (may be strings, not necessarily in ErrorCodes class)
     INVALID_QUERY = "INVALID_QUERY"
     INVALID_BATCH_OPS = "INVALID_BATCH_OPS"
-    BAD_ASYNC_ITERATOR_SHAPE = "BAD_ASYNC_ITERATOR_SHAPE"
-    INVALID_DELETE_SPEC = "INVALID_DELETE_SPEC"
 ```
 
 ### 7.7. AutoGen-Specific Context
@@ -1319,7 +1360,7 @@ Unknown fields are ignored.
 
 ### 8.1. Overview
 
-The CrewAI adapter exposes Corpus graph operations as CrewAI BaseTool wrappers, enabling role-based agent teams to access graph data. It solves context propagation across agents that operate without a shared runtime.
+The CrewAI adapter exposes Corpus graph operations as CrewAI BaseTool wrappers, enabling role-based agent teams to access graph data. It solves context propagation across agents that operate without a shared runtime and defends against malformed LLM-provided parameters.
 
 ### 8.2. Framework-Specific Challenges
 
@@ -1327,7 +1368,7 @@ The CrewAI adapter exposes Corpus graph operations as CrewAI BaseTool wrappers, 
 |-----------|----------|
 | No shared runtime context across agents | Extract context from per-call `task` parameter |
 | Tool execution in async agent loops | Bounded thread pool with `_run_blocking_in_crewai_tool_thread()` |
-| LLM-provided parameters need validation | `coerce_bounded_positive_int()` for numeric parameters (see §5.1.5) |
+| LLM-provided parameters may be malformed | `coerce_bounded_positive_int()` for numeric parameters (see §5.1.5) |
 | Tool outputs must be JSON strings | `_json_result()` with size bounds and fallback truncation |
 
 ### 8.3. Data Types
@@ -1373,7 +1414,7 @@ def _build_ctx(
 ) -> Optional[OperationContext]:
     """Translate CrewAI Task to OperationContext."""
     # Use core_ctx_from_crewai()
-    # Enrich with framework metadata
+    # Enrich with framework metadata (best-effort)
     # Return None on failure
 ```
 
@@ -1423,13 +1464,32 @@ def create_crewai_graph_tools(
     - Provides both _run (sync) and _arun (async) implementations
     - Uses thread pool for sync-in-async safety
     - For numeric parameters like max_chunks, uses `validated_max_chunks()` (see §5.1.5)
-    - Returns JSON strings with size bounds
+    - Returns JSON strings with size bounds and fallback truncation
     """
 ```
 
 ### 8.6. Error Codes
 
-Same as AutoGen adapter (see §7.6), with framework label "crewai".
+```python
+class ErrorCodes:
+    BAD_OPERATION_CONTEXT = "BAD_OPERATION_CONTEXT"
+    BAD_TRANSLATED_SCHEMA = "BAD_TRANSLATED_SCHEMA"
+    BAD_HEALTH_RESULT = "BAD_HEALTH_RESULT"
+    BAD_TRANSLATED_RESULT = "BAD_TRANSLATED_RESULT"
+    BAD_TRANSLATED_CHUNK = "BAD_TRANSLATED_CHUNK"
+    BAD_UPSERT_RESULT = "BAD_UPSERT_RESULT"
+    BAD_DELETE_RESULT = "BAD_DELETE_RESULT"
+    BAD_BULK_VERTICES_RESULT = "BAD_BULK_VERTICES_RESULT"
+    BAD_TRAVERSAL_RESULT = "BAD_TRAVERSAL_RESULT"
+    BAD_TRANSACTION_RESULT = "BAD_TRANSACTION_RESULT"
+    BAD_BATCH_RESULT = "BAD_BATCH_RESULT"
+    BAD_ADAPTER_RESULT = "BAD_ADAPTER_RESULT"
+    SYNC_WRAPPER_CALLED_IN_EVENT_LOOP = "SYNC_WRAPPER_CALLED_IN_EVENT_LOOP"
+    
+    INVALID_QUERY = "INVALID_QUERY"
+    INVALID_BATCH_OPS = "INVALID_BATCH_OPS"
+    INVALID_TOOL_PARAM = "INVALID_TOOL_PARAM"
+```
 
 ### 8.7. CrewAI-Specific Context
 
@@ -1449,7 +1509,7 @@ Unknown fields are ignored.
 
 ### 9.1. Overview
 
-The LangChain adapter exposes Corpus graph operations as LangChain BaseTool wrappers, enabling graph access in LangChain agents and chains. It solves the production problem of sync methods called from async contexts and LLM-provided parameter validation.
+The LangChain adapter exposes Corpus graph operations as LangChain BaseTool wrappers, enabling graph access in LangChain agents and chains. It solves the production problem of sync methods called from async contexts and provides defensive LLM-provided parameter validation.
 
 ### 9.2. Framework-Specific Challenges
 
@@ -1503,7 +1563,7 @@ def _build_ctx(
 ) -> Optional[OperationContext]:
     """Translate LangChain config to OperationContext."""
     # Use core_ctx_from_langchain()
-    # Enrich with framework metadata
+    # Enrich with framework metadata (best-effort)
     # Handle both RunnableConfig and older dict formats
 ```
 
@@ -1590,7 +1650,25 @@ def create_corpus_graph_tool(
 
 ### 9.6. Error Codes
 
-Same as AutoGen adapter (see §7.6), with framework label "langchain".
+```python
+class ErrorCodes:
+    BAD_OPERATION_CONTEXT = "BAD_OPERATION_CONTEXT"
+    BAD_TRANSLATED_SCHEMA = "BAD_TRANSLATED_SCHEMA"
+    BAD_HEALTH_RESULT = "BAD_HEALTH_RESULT"
+    BAD_TRANSLATED_RESULT = "BAD_TRANSLATED_RESULT"
+    BAD_TRANSLATED_CHUNK = "BAD_TRANSLATED_CHUNK"
+    BAD_UPSERT_RESULT = "BAD_UPSERT_RESULT"
+    BAD_DELETE_RESULT = "BAD_DELETE_RESULT"
+    BAD_BULK_VERTICES_RESULT = "BAD_BULK_VERTICES_RESULT"
+    BAD_TRAVERSAL_RESULT = "BAD_TRAVERSAL_RESULT"
+    BAD_TRANSACTION_RESULT = "BAD_TRANSACTION_RESULT"
+    BAD_BATCH_RESULT = "BAD_BATCH_RESULT"
+    BAD_ADAPTER_RESULT = "BAD_ADAPTER_RESULT"
+    SYNC_WRAPPER_CALLED_IN_EVENT_LOOP = "SYNC_WRAPPER_CALLED_IN_EVENT_LOOP"
+    
+    INVALID_QUERY = "INVALID_QUERY"
+    INVALID_BATCH_OPS = "INVALID_BATCH_OPS"
+```
 
 ### 9.7. LangChain-Specific Context
 
@@ -1609,7 +1687,7 @@ Unknown fields are ignored.
 
 ### 10.1. Overview
 
-The LlamaIndex adapter implements the `GraphStore` protocol, enabling Corpus graphs to be used in LlamaIndex's knowledge graph indices. It solves the problem of callback propagation and triplet operation mapping.
+The LlamaIndex adapter implements the `GraphStore` protocol, enabling Corpus graphs to be used in LlamaIndex's knowledge graph indices. It provides robust context propagation and includes RECOMMENDED strict validation for edge operations.
 
 ### 10.2. Framework-Specific Challenges
 
@@ -1617,9 +1695,9 @@ The LlamaIndex adapter implements the `GraphStore` protocol, enabling Corpus gra
 |-----------|----------|
 | GraphStore expects triplet operations (subj, rel, obj) | Configurable query templates for triplet mapping |
 | Callback manager must propagate to operations | `core_ctx_from_llamaindex()` extracts context |
-| Async streaming may return awaitable→AsyncIterator | `_normalize_async_iterator()` handles both forms |
+| Async streaming may return awaitable→AsyncIterator | `_normalize_async_iterator()` with explicit shape checking |
 | Schema representation as string | `get_schema()` returns str(GraphSchema) |
-| Persist operation expected but graph is remote | No-op by default, overridable |
+| Edge validation | RECOMMENDED strict validation (id, src, dst, label, JSON properties); current implementation enforces at minimum non-null edges and presence of IDs |
 
 ### 10.3. Data Types
 
@@ -1663,7 +1741,7 @@ def _build_ctx(
 ) -> Optional[OperationContext]:
     """Translate LlamaIndex CallbackManager to OperationContext."""
     # Use core_ctx_from_llamaindex()
-    # Enrich with framework metadata
+    # Enrich with framework metadata (best-effort)
     # Return None on failure
 ```
 
@@ -1736,45 +1814,32 @@ class CorpusGraphStore(_LlamaIndexGraphStore):
             raise TypeError("upsert_triplet_query must be a string or None")
         if delete_triplet_query is not None and not isinstance(delete_triplet_query, str):
             raise TypeError("delete_triplet_query must be a string or None")
-    
-    def get(self, subj: str) -> List[List[str]]:
-        """Get triplets for subject using get_query template."""
-        if self._get_query is None:
-            raise NotImplementedError("get_query not provided")
-        # Implementation uses self._get_query
-        ...
-    
-    def get_rel_map(self, subjs: Optional[List[str]] = None, depth: int = 2, limit: int = 30) -> Dict[str, List[List[str]]]:
-        """Get relation map using get_rel_map_query template."""
-        if self._get_rel_map_query is None:
-            raise NotImplementedError("get_rel_map_query not provided")
-        ...
-    
-    def upsert_triplet(self, subj: str, rel: str, obj: str) -> None:
-        """Upsert triplet using upsert_triplet_query template."""
-        if self._upsert_triplet_query is None:
-            raise NotImplementedError("upsert_triplet_query not provided")
-        ...
-    
-    def delete(self, subj: str, rel: str, obj: str) -> None:
-        """Delete triplet using delete_triplet_query template."""
-        if self._delete_triplet_query is None:
-            raise NotImplementedError("delete_triplet_query not provided")
-        ...
-    
-    def get_schema(self, refresh: bool = False) -> str:
-        """Return schema as string."""
-        return str(self._client.get_schema())
 ```
-
-**Template Validation (Normative):**  
-- All query template strings MUST be provided at initialization if the corresponding method is to be used.
-- If a template is `None` and the corresponding method is called, the adapter MUST raise `NotImplementedError`.
-- Templates are not validated for syntactic correctness at initialization; errors will be raised at runtime when the query is executed. This is acceptable because templates may contain placeholders that are only resolvable at runtime.
 
 ### 10.6. Error Codes
 
-Same as AutoGen adapter (see §7.6), with framework label "llamaindex".
+```python
+class ErrorCodes:
+    BAD_OPERATION_CONTEXT = "BAD_OPERATION_CONTEXT"
+    BAD_TRANSLATED_SCHEMA = "BAD_TRANSLATED_SCHEMA"
+    BAD_HEALTH_RESULT = "BAD_HEALTH_RESULT"
+    BAD_TRANSLATED_RESULT = "BAD_TRANSLATED_RESULT"
+    BAD_TRANSLATED_CHUNK = "BAD_TRANSLATED_CHUNK"
+    BAD_UPSERT_RESULT = "BAD_UPSERT_RESULT"
+    BAD_DELETE_RESULT = "BAD_DELETE_RESULT"
+    BAD_BULK_VERTICES_RESULT = "BAD_BULK_VERTICES_RESULT"
+    BAD_TRAVERSAL_RESULT = "BAD_TRAVERSAL_RESULT"
+    BAD_BATCH_RESULT = "BAD_BATCH_RESULT"
+    BAD_TRANSACTION_RESULT = "BAD_TRANSACTION_RESULT"
+    BAD_ADAPTER_RESULT = "BAD_ADAPTER_RESULT"
+    SYNC_WRAPPER_CALLED_IN_EVENT_LOOP = "SYNC_WRAPPER_CALLED_IN_EVENT_LOOP"
+    
+    BAD_ASYNC_ITERATOR_SHAPE = "BAD_ASYNC_ITERATOR_SHAPE"
+    INVALID_DELETE_SPEC = "INVALID_DELETE_SPEC"
+    
+    INVALID_QUERY = "INVALID_QUERY"
+    INVALID_BATCH_OPS = "INVALID_BATCH_OPS"
+```
 
 ### 10.7. LlamaIndex-Specific Context
 
@@ -1793,7 +1858,7 @@ Unknown fields are ignored.
 
 ### 11.1. Overview
 
-The Semantic Kernel adapter exposes Corpus graph operations as SK plugins, enabling graph access in Semantic Kernel applications. It solves the problem of context propagation from SK's dual context/settings objects.
+The Semantic Kernel adapter exposes Corpus graph operations as SK plugins, enabling graph access in Semantic Kernel applications. It solves context propagation from SK's dual context/settings objects and provides forward-compatible method signatures.
 
 ### 11.2. Framework-Specific Challenges
 
@@ -1802,7 +1867,7 @@ The Semantic Kernel adapter exposes Corpus graph operations as SK plugins, enabl
 | Context comes from both context and settings objects | `core_ctx_from_semantic_kernel()` handles both |
 | Capabilities methods may evolve with new parameters | Forward kwargs with graceful TypeError fallback |
 | Plugin architecture requires thin wrapper | `CorpusSemanticKernelPlugin` passthrough layer |
-| Async streaming may return awaitable→AsyncIterator | `_normalize_async_iterator()` handles both forms |
+| Async streaming may return awaitable→AsyncIterator | `_normalize_async_iterator()` with explicit shape checking |
 
 ### 11.3. Data Types
 
@@ -1849,7 +1914,7 @@ def _build_ctx(
 ) -> Optional[OperationContext]:
     """Translate Semantic Kernel context and settings to OperationContext."""
     # Use core_ctx_from_semantic_kernel()
-    # Enrich with framework metadata
+    # Enrich with framework metadata (best-effort)
     # Return None on failure
 ```
 
@@ -1932,7 +1997,28 @@ class CorpusSemanticKernelPlugin:
 
 ### 11.6. Error Codes
 
-Same as AutoGen adapter (see §7.6), with framework label "semantic_kernel".
+```python
+class ErrorCodes:
+    BAD_OPERATION_CONTEXT = "BAD_OPERATION_CONTEXT"
+    BAD_TRANSLATED_SCHEMA = "BAD_TRANSLATED_SCHEMA"
+    BAD_HEALTH_RESULT = "BAD_HEALTH_RESULT"
+    BAD_TRANSLATED_RESULT = "BAD_TRANSLATED_RESULT"
+    BAD_TRANSLATED_CHUNK = "BAD_TRANSLATED_CHUNK"
+    BAD_UPSERT_RESULT = "BAD_UPSERT_RESULT"
+    BAD_DELETE_RESULT = "BAD_DELETE_RESULT"
+    BAD_BULK_VERTICES_RESULT = "BAD_BULK_VERTICES_RESULT"
+    BAD_TRAVERSAL_RESULT = "BAD_TRAVERSAL_RESULT"
+    BAD_TRANSACTION_RESULT = "BAD_TRANSACTION_RESULT"
+    BAD_BATCH_RESULT = "BAD_BATCH_RESULT"
+    BAD_ADAPTER_RESULT = "BAD_ADAPTER_RESULT"
+    SYNC_WRAPPER_CALLED_IN_EVENT_LOOP = "SYNC_WRAPPER_CALLED_IN_EVENT_LOOP"
+    
+    BAD_ASYNC_ITERATOR_SHAPE = "BAD_ASYNC_ITERATOR_SHAPE"
+    INVALID_DELETE_SPEC = "INVALID_DELETE_SPEC"
+    
+    INVALID_QUERY = "INVALID_QUERY"
+    INVALID_BATCH_OPS = "INVALID_BATCH_OPS"
+```
 
 ### 11.7. Semantic Kernel-Specific Context
 
@@ -1953,25 +2039,25 @@ Unknown fields are ignored.
 
 ### 12.1. Error Code Mapping Table (Normative)
 
-| Corpus Error Code | Framework Adapter Mapping | Retryable |
-|-------------------|--------------------------|-----------|
-| `BAD_OPERATION_CONTEXT` | Log warning, continue without context | No |
-| `BAD_TRANSLATED_SCHEMA` | Raise TypeError with context | No |
-| `BAD_HEALTH_RESULT` | Raise TypeError with details | No |
-| `BAD_TRANSLATED_RESULT` | Raise TypeError with details | No |
-| `BAD_TRANSLATED_CHUNK` | Raise TypeError with details | No |
-| `BAD_UPSERT_RESULT` | Raise TypeError with details | No |
-| `BAD_DELETE_RESULT` | Raise TypeError with details | No |
-| `BAD_BULK_VERTICES_RESULT` | Raise TypeError with details | No |
-| `BAD_TRAVERSAL_RESULT` | Raise TypeError with details | No |
-| `BAD_BATCH_RESULT` | Raise TypeError with details | No |
-| `BAD_TRANSACTION_RESULT` | Raise TypeError with details | No |
-| `BAD_ADAPTER_RESULT` | Raise BadRequest with context | No |
-| `SYNC_WRAPPER_CALLED_IN_EVENT_LOOP` | Raise RuntimeError | No |
-| `INVALID_QUERY` | Raise ValueError | No |
-| `INVALID_BATCH_OPS` | Raise ValueError | No |
-| `BAD_ASYNC_ITERATOR_SHAPE` | Raise TypeError | No |
-| `INVALID_DELETE_SPEC` | Raise BadRequest | No |
+| Corpus Error Code | Framework Adapter Mapping | Retryable | Notes |
+|-------------------|--------------------------|-----------|-------|
+| `BAD_OPERATION_CONTEXT` | Log warning, continue without context | No | |
+| `BAD_TRANSLATED_SCHEMA` | Raise TypeError with context | No | |
+| `BAD_HEALTH_RESULT` | Raise TypeError with details | No | |
+| `BAD_TRANSLATED_RESULT` | Raise TypeError with details | No | |
+| `BAD_TRANSLATED_CHUNK` | Raise TypeError with details | No | |
+| `BAD_UPSERT_RESULT` | Raise TypeError with details | No | |
+| `BAD_DELETE_RESULT` | Raise TypeError with details | No | |
+| `BAD_BULK_VERTICES_RESULT` | Raise TypeError with details | No | |
+| `BAD_TRAVERSAL_RESULT` | Raise TypeError with details | No | |
+| `BAD_BATCH_RESULT` | Raise TypeError with details | No | |
+| `BAD_TRANSACTION_RESULT` | Raise TypeError with details | No | |
+| `BAD_ADAPTER_RESULT` | Raise BadRequest with context | No | Used for delete spec validation |
+| `SYNC_WRAPPER_CALLED_IN_EVENT_LOOP` | Raise RuntimeError | No | |
+| `INVALID_QUERY` | Raise ValueError | No | |
+| `INVALID_BATCH_OPS` | Raise ValueError | No | |
+| `BAD_ASYNC_ITERATOR_SHAPE` | Raise TypeError | No | Used by adapters with explicit normalization |
+| `INVALID_DELETE_SPEC` | Used in message string only | No | Error code field is `BAD_ADAPTER_RESULT` |
 
 ### 12.2. Retry Semantics
 
@@ -2020,11 +2106,13 @@ graph_stream_chunks_total{framework,operation}
 }
 ```
 
+**Note:** `tenant_hash` is included only when available in `OperationContext.attrs`. Adapters do not generate tenant hashes.
+
 ### 13.3. Distributed Tracing (SHOULD)
 
 - Propagate `traceparent` from operation context
 - Create spans for each graph operation
-- Include attributes: `framework`, `operation`, `namespace`, `tenant_hash`
+- Include attributes: `framework`, `operation`, `namespace`, `tenant_hash` (when available)
 - Final span status matches operation outcome
 
 ---
@@ -2034,7 +2122,7 @@ graph_stream_chunks_total{framework,operation}
 ### 14.1. Tenant Isolation (MUST)
 
 - `tenant` in operation context MUST be used for isolation
-- Never log raw tenant identifiers; use `tenant_hash`
+- Never log raw tenant identifiers; use `tenant_hash` when available
 - Caches MUST key by `tenant_hash` when `cache_scope="tenant"`
 
 ### 14.2. Credential Handling (MUST)
@@ -2045,15 +2133,18 @@ graph_stream_chunks_total{framework,operation}
 ### 14.3. Log Redaction (MUST)
 
 - All logs use `_safe_snapshot()` for object serialization
-- Strings >64 bytes replaced with hash + length
+- Strings >5000 characters truncated
+- Containers >200 items limited
 - No raw query text, parameters, or vectors in logs
-- Tenant identifiers always hashed
+- Tenant identifiers never logged raw; `tenant_hash` used when available
 
 ---
 
 ## 15. Performance Characteristics
 
 ### 15.1. Latency Targets (Indicative)
+
+These indicative ranges are not service-level agreements (SLAs) and may vary significantly based on backend implementation, dataset size, network topology, and deployment environment. They are provided for general guidance only.
 
 | Operation Type | Typical Range | Notes |
 |----------------|---------------|-------|
@@ -2068,13 +2159,13 @@ graph_stream_chunks_total{framework,operation}
 - All adapters are thread-safe for concurrent use
 - Translator initialized lazily with locks
 - Resource cleanup safe under concurrent access
-- Tool bridge executors bounded (max_workers=4)
+- Tool bridge executors bounded (max_workers=4) for CrewAI/LangChain
 
 ### 15.3. Caching Strategies
 
 - Graph schema can be cached with TTL
 - Query results cacheable by `(namespace, query_text, params_hash)`
-- Cache keys MUST include `tenant_hash`
+- Cache keys MUST include `tenant_hash` when tenant isolation is required
 - Respect `cache_scope` and `cache_tags` when provided
 - Never cache across tenant boundaries
 
@@ -2089,8 +2180,8 @@ graph_stream_chunks_total{framework,operation}
 3. Add error context decorators
 4. Implement core graph methods (query, stream_query, etc.)
 5. Add context extraction and building
-6. Implement resource management (including lifecycle state)
-7. Add validation helpers (`_validate_upsert_edges_spec`, `_select_filter_or_ids`)
+6. Implement best-effort resource cleanup
+7. Add validation helpers (`_validate_upsert_edges_spec`, `_validate_delete_spec`)
 8. Add Single Source of Truth request builders
 9. Implement integration helpers (tools, plugins, stores)
 10. Write conformance tests
@@ -2101,9 +2192,9 @@ graph_stream_chunks_total{framework,operation}
 - Validate query strings are non-empty
 - Validate batch operations list and each operation
 - Validate UpsertNodesSpec structure
-- Validate UpsertEdgesSpec edges (ID, src, dst, label required)
-- Validate delete specs have either filter or non-empty ids
-- Validate numeric parameters from LLMs using `coerce_bounded_positive_int()` (see §5.1.5)
+- Validate UpsertEdgesSpec has non-None, iterable edges; each edge MUST have an ID (src/dst/label validation RECOMMENDED but not required; LlamaIndex aims for strict validation in future releases)
+- Validate delete specs have either filter or non-empty ids (error code `BAD_ADAPTER_RESULT`, message SHOULD include `[INVALID_DELETE_SPEC]`)
+- For CrewAI/LangChain tools, numeric parameters SHOULD use coercion with `coerce_bounded_positive_int()` or `validated_max_chunks()`
 
 ### 16.3. Testing
 
@@ -2114,28 +2205,27 @@ Each adapter MUST pass:
 - Error context attachment tests
 - Context building tests (including failure cases)
 - Batch operation tests (empty, single, multiple)
-- Streaming tests (sync and async)
+- Streaming tests (sync and async) verifying semantic equivalence
 - Event loop guard tests
-- Resource cleanup tests (including lifecycle state transitions)
+- Resource cleanup tests (idempotency, best-effort)
 - Namespace resolution tests (precedence rules)
-- Delete operation helper tests
-- Async iterator normalization tests
+- Delete operation validation tests
 
 #### 16.3.2. Framework-Specific Tests
 
-- **AutoGen:** Tool creation, conversation context extraction, thread pool bridge
+- **AutoGen:** Tool creation, conversation context extraction
 - **CrewAI:** Task context extraction, tool bridge executor, parameter coercion using `coerce_bounded_positive_int()`
 - **LangChain:** Config context extraction, close() coroutine handling, tool creation, parameter coercion using `validated_max_chunks()`
-- **LlamaIndex:** Callback manager context, GraphStore triplet mapping, request builders, template validation
+- **LlamaIndex:** Callback manager context, GraphStore triplet mapping, request builders, template validation, edge validation (minimum requirements)
 - **Semantic Kernel:** Context+settings translation, kwargs forwarding, plugin wrapper
 
 #### 16.3.3. Cross-Adapter Tests
 
-- All adapters produce identical results for same inputs (see §6.7)
-- Error codes consistent across frameworks
+- All adapters produce identical results for same inputs when backed by identical graph adapter and translator configuration (see §6.7)
+- Error taxonomy consistent across frameworks
 - Observability fields follow same patterns
-- Lifecycle behavior (close, use after close) consistent
 - Namespace resolution identical across all
+- Delete validation patterns consistent (all use `BAD_ADAPTER_RESULT` with `[INVALID_DELETE_SPEC]` in message)
 
 ---
 
@@ -2150,13 +2240,14 @@ Adapter packages MUST use Semantic Versioning:
 
 ### 17.2. Framework Version Compatibility
 
-Adapters SHOULD document supported framework versions. "Tested" means that the adapter has passed the conformance test suite against those specific framework versions.
+Adapters MUST document supported framework versions in package metadata (e.g., `pyproject.toml`) and/or README.
 
-- AutoGen: ≥0.4.0 (tested)
-- CrewAI: ≥0.30.0 (tested)
-- LangChain: ≥0.1.0, ≤0.3.x (tested)
-- LlamaIndex: ≥0.10.0 (tested)
-- Semantic Kernel: ≥1.0.0 (tested)
+**Recommended testing matrix:**
+- AutoGen: ≥0.4.0
+- CrewAI: ≥0.30.0
+- LangChain: ≥0.1.0, ≤0.3.x
+- LlamaIndex: ≥0.10.0
+- Semantic Kernel: ≥1.0.0
 
 ### 17.3. Deprecation Policy
 
@@ -2189,10 +2280,10 @@ Adapters SHOULD document supported framework versions. "Tested" means that the a
 
 | Framework | Primary Challenge | Adapter Solution |
 |-----------|------------------|------------------|
-| AutoGen | Agent tool interfaces + async/sync bridging | FunctionTool wrappers + thread pool bridge |
+| AutoGen | Agent tool interfaces + async-only runtime | FunctionTool wrappers, fully async tools |
 | CrewAI | No shared runtime context + LLM parameter safety | Task context extraction + parameter coercion |
 | LangChain | Config evolution + sync-in-async deadlocks | Structural context extraction + worker thread bridge |
-| LlamaIndex | Triplet operations + callback propagation | Configurable query templates + callback manager translation |
+| LlamaIndex | Triplet operations + callback propagation | Configurable query templates + RECOMMENDED strict validation |
 | Semantic Kernel | Dual context/settings + forward compatibility | Combined translation + kwargs fallback |
 
 ---
@@ -2202,7 +2293,7 @@ Adapters SHOULD document supported framework versions. "Tested" means that the a
 ### B.1. Context Building Patterns
 
 ```python
-# Framework-specific context building
+# Framework-specific context building (best-effort)
 def _build_ctx(self, *, framework_input=None, extra_context=None):
     try:
         ctx = core_ctx_from_framework(framework_input, **extra_context)
@@ -2213,9 +2304,16 @@ def _build_ctx(self, *, framework_input=None, extra_context=None):
     if not _looks_like_operation_context(ctx):
         return None
     
-    # Enrich with framework metadata
-    attrs = getattr(ctx, "attrs", {})
-    attrs.setdefault("framework", self._framework_name)
+    # Enrich with framework metadata (best-effort)
+    try:
+        attrs = getattr(ctx, "attrs", {})
+        if isinstance(attrs, dict):
+            attrs.setdefault("framework", self._framework_name)
+            if self._framework_version:
+                attrs.setdefault("framework_version", self._framework_version)
+    except Exception:
+        pass
+    
     return ctx
 ```
 
@@ -2225,7 +2323,7 @@ def _build_ctx(self, *, framework_input=None, extra_context=None):
 # Guard pattern
 _ensure_not_in_event_loop("sync_method")
 
-# Tool bridge pattern (bounded thread pool)
+# Tool bridge pattern (bounded thread pool) - CrewAI/LangChain only
 def _run_in_tool_thread(fn):
     return _TOOL_BRIDGE_EXECUTOR.submit(fn).result()
 
@@ -2236,10 +2334,10 @@ if inspect.iscoroutine(result):
     logger.warning("Use aclose() for async close")
 ```
 
-### B.3. Async Streaming Normalization Patterns
+### B.3. Async Streaming Patterns
 
 ```python
-# Normalize translator return shapes
+# Option 1: Adapter-level normalization (LlamaIndex, Semantic Kernel)
 aiter_or_awaitable = translator.arun_query_stream(...)
 normalized = _normalize_async_iterator(aiter_or_awaitable)
 
@@ -2249,16 +2347,20 @@ else:
     aiter = normalized
 
 if not _is_async_iterator(aiter):
-    raise TypeError("Invalid stream shape")
+    raise TypeError(f"Invalid stream shape [{ErrorCodes.BAD_ASYNC_ITERATOR_SHAPE}]")
 
 async for chunk in aiter:
+    yield chunk
+
+# Option 2: Trust translator (AutoGen, CrewAI, LangChain)
+async for chunk in translator.arun_query_stream(...):
     yield chunk
 ```
 
 ### B.4. Resource Cleanup Patterns
 
 ```python
-# Sync cleanup with idempotency
+# Sync cleanup with idempotency (best-effort)
 def close(self):
     if self._closed:
         return
@@ -2279,17 +2381,20 @@ async def aclose(self):
     self.close()
 ```
 
-### B.5. Delete Operation Helper Patterns
+### B.5. Delete Operation Validation Patterns
 
 ```python
-# Shared filter/ID selection
-def _select_filter_or_ids(self, *, spec_filter, spec_ids, empty_message):
+# Shared validation for delete specs
+def _validate_delete_spec(self, *, spec_filter, spec_ids, empty_message):
     if spec_filter is not None:
         return spec_filter
     
     ids = list(spec_ids or [])
     if not ids:
-        raise BadRequest(f"{empty_message} [{ErrorCodes.INVALID_DELETE_SPEC}]")
+        raise BadRequest(
+            f"{empty_message} [INVALID_DELETE_SPEC]",
+            code=ErrorCodes.BAD_ADAPTER_RESULT,
+        )
     return ids
 ```
 
@@ -2338,7 +2443,7 @@ client = CorpusAutoGenGraphClient(
     default_namespace="production"
 )
 
-# Create tools
+# Create tools (fully async)
 tools = create_autogen_graph_tools(
     client,
     name_prefix="knowledge",
@@ -2485,37 +2590,38 @@ result = await kernel.run_async(
 
 ## Appendix D — Error Code Reference
 
-| Code | Description | Frameworks |
-|------|-------------|------------|
-| `BAD_OPERATION_CONTEXT` | Failed to build OperationContext | All |
-| `BAD_TRANSLATED_SCHEMA` | Schema result has wrong type | All |
-| `BAD_HEALTH_RESULT` | Health result not a mapping | All |
-| `BAD_TRANSLATED_RESULT` | Query result has wrong type | All |
-| `BAD_TRANSLATED_CHUNK` | Query chunk has wrong type | All |
-| `BAD_UPSERT_RESULT` | Upsert result has wrong type | All |
-| `BAD_DELETE_RESULT` | Delete result has wrong type | All |
-| `BAD_BULK_VERTICES_RESULT` | Bulk vertices result wrong type | All |
-| `BAD_TRAVERSAL_RESULT` | Traversal result wrong type | All |
-| `BAD_BATCH_RESULT` | Batch result wrong type | All |
-| `BAD_TRANSACTION_RESULT` | Transaction result wrong type | All |
-| `BAD_ADAPTER_RESULT` | Adapter returned invalid data | All |
-| `SYNC_WRAPPER_CALLED_IN_EVENT_LOOP` | Sync method called from async context | All |
-| `INVALID_QUERY` | Query validation failed | All |
-| `INVALID_BATCH_OPS` | Batch operations validation failed | All |
-| `BAD_ASYNC_ITERATOR_SHAPE` | Async stream returned invalid shape | All |
-| `INVALID_DELETE_SPEC` | Delete spec missing filter and ids | All |
+| Code | Description | Frameworks | Notes |
+|------|-------------|------------|-------|
+| `BAD_OPERATION_CONTEXT` | Failed to build OperationContext | All | |
+| `BAD_TRANSLATED_SCHEMA` | Schema result has wrong type | All | |
+| `BAD_HEALTH_RESULT` | Health result not a mapping | All | |
+| `BAD_TRANSLATED_RESULT` | Query result has wrong type | All | |
+| `BAD_TRANSLATED_CHUNK` | Query chunk has wrong type | All | |
+| `BAD_UPSERT_RESULT` | Upsert result has wrong type | All | |
+| `BAD_DELETE_RESULT` | Delete result has wrong type | All | |
+| `BAD_BULK_VERTICES_RESULT` | Bulk vertices result wrong type | All | |
+| `BAD_TRAVERSAL_RESULT` | Traversal result wrong type | All | |
+| `BAD_BATCH_RESULT` | Batch result wrong type | All | |
+| `BAD_TRANSACTION_RESULT` | Transaction result wrong type | All | |
+| `BAD_ADAPTER_RESULT` | Adapter returned invalid data | All | Used for delete spec validation |
+| `SYNC_WRAPPER_CALLED_IN_EVENT_LOOP` | Sync method called from async context | All | |
+| `INVALID_QUERY` | Query validation failed | All | |
+| `INVALID_BATCH_OPS` | Batch operations validation failed | All | |
+| `BAD_ASYNC_ITERATOR_SHAPE` | Async stream returned invalid shape | LlamaIndex, Semantic Kernel | |
+| `INVALID_DELETE_SPEC` | Delete spec missing filter and ids | Used in message only | Error code field is `BAD_ADAPTER_RESULT` |
+| `INVALID_TOOL_PARAM` | Invalid tool parameter | CrewAI | |
 
 ---
 
 ## Appendix E — Implementation Status (Non-Normative)
 
-| Adapter | Status | Conformance | Framework Versions |
-|---------|--------|-------------|-------------------|
-| AutoGen | Stable | 100% | ≥0.4.0 |
-| CrewAI | Stable | 100% | ≥0.30.0 |
-| LangChain | Stable | 100% | 0.1.x, 0.2.x, 0.3.x |
-| LlamaIndex | Stable | 100% | ≥0.10.0 |
-| Semantic Kernel | Stable | 100% | ≥1.0.0 |
+| Adapter | Status | Conformance | Framework Versions | Notes |
+|---------|--------|-------------|-------------------|-------|
+| AutoGen | Stable | 100% | ≥0.4.0 | Fully async tools, no thread pool |
+| CrewAI | Stable | 100% | ≥0.30.0 | Parameter coercion, thread pool |
+| LangChain | Stable | 100% | 0.1.x, 0.2.x, 0.3.x | Parameter validation, thread pool |
+| LlamaIndex | Stable | 100% | ≥0.10.0 | RECOMMENDED strict validation (id/src/dst/label/JSON); current enforces minimum |
+| Semantic Kernel | Stable | 100% | ≥1.0.0 | Strict validation, explicit streaming checks |
 
 **Note:** This appendix is non‑normative and provided for informational purposes only. The authoritative conformance status is determined by the conformance test suite (§16.3) and the implementation’s own documentation.
 
