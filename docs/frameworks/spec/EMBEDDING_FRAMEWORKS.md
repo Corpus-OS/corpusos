@@ -469,117 +469,70 @@ async def __aexit__(self, exc_type, exc, tb):
 Baseline guard:
 
 ```python
+
 def _ensure_not_in_event_loop(sync_api_name, async_alternative=None):
+
     try:
+
         asyncio.get_running_loop()
+
     except RuntimeError:
+
         return
+
     suggestion = f"Use async variant: {async_alternative}" if async_alternative else ""
+
     raise RuntimeError(f"{sync_api_name} called from event loop. {suggestion}")
+
 ```
 
 **Bridging allowances (Normative, per-framework):**
 
 * **LangChain:** Sync methods MAY transparently execute via worker thread when called inside an active event loop, to preserve compatibility with LangChain runtime/test behavior.
+
 * **Semantic Kernel:** Convenience sync aliases (`embed_documents`, `embed_query`) MAY bridge by executing the async variant in a dedicated worker thread.
+
 * **AutoGen:** When `_allow_chromadb_in_event_loop=True`, `__call__` and legacy `embed_query(input=[...])` flows MAY bridge via thread pool.
+
 * **CrewAI, LlamaIndex:** Sync methods MUST hard-refuse execution on the event loop thread (no bridging).
 
-```markdown
-### 4.9. Async Streaming Support (MUST)
+### 4.9. Dimension Management (SHOULD)
 
-All async streaming methods MUST produce **semantically equivalent results** for the same input and model. Chunk boundaries MAY differ across implementations as long as:
-
-- Chunk **order** is preserved.
-- Each chunk's internal structure and invariants are preserved (no reordering, duplication, or loss).
-
-All adapters MUST call the shared translator streaming primitive (for example, `GraphTranslator.arun_query_stream(...)` or the corresponding embedding/LLM streaming API). The translator is the **normative source of truth** for:
-
-- Returning an `AsyncIterator` (or an awaitable that resolves to an `AsyncIterator`).
-- Ensuring chunk shape and protocol invariants.
-
-Adapters MAY add an additional normalization layer on top of the translator. This **adapter-level normalization** is:
-
-- **RECOMMENDED** for LlamaIndex and Semantic Kernel.
-- **OPTIONAL** (and MAY be omitted) for AutoGen, CrewAI, and LangChain.
-
----
-
-#### 4.9.1. Option A — Adapter-Level Normalization (RECOMMENDED for LlamaIndex, Semantic Kernel)
-
-Adapters that surface streaming as a first-class, strongly-typed API (for example, LlamaIndex, Semantic Kernel) SHOULD perform an explicit normalization step to guard against unexpected shapes, even if the translator already enforces its own contract.
+Adapters SHOULD track embedding dimension on first successful embed for **observability only**:
 
 ```python
-def _is_async_iterator(obj: Any) -> bool:
-    """Return True if object implements AsyncIterator protocol."""
-    return hasattr(obj, "__aiter__") and hasattr(obj, "__anext__")
 
+def _update_dim_hint(self, dim):
 
-def _normalize_async_iterator(aiter_or_awaitable: Any) -> Any:
-    """
-    Normalize either AsyncIterator or awaitable→AsyncIterator.
+    if dim is None:
 
-    Returns:
-        - The awaitable unchanged, if `inspect.isawaitable(...)` is True.
-        - The AsyncIterator unchanged, if it implements __aiter__/__anext__.
+        return
 
-    Raises:
-        TypeError with BAD_ASYNC_ITERATOR_SHAPE for invalid shapes.
-    """
-    if inspect.isawaitable(aiter_or_awaitable):
-        return aiter_or_awaitable
-    if _is_async_iterator(aiter_or_awaitable):
-        return aiter_or_awaitable
+    if self._embedding_dim_hint is not None:
 
-    raise TypeError(
-        f"Expected AsyncIterator or awaitable; got {type(aiter_or_awaitable).__name__} "
-        f"[{ErrorCodes.BAD_ASYNC_ITERATOR_SHAPE}]"
-    )
+        return
 
+    with self._lock:
 
-async def astream_query(self, ...):
-    # ... setup ...
-    aiter_or_awaitable = self._translator.arun_query_stream(...)
-    normalized = _normalize_async_iterator(aiter_or_awaitable)
+        if self._embedding_dim_hint is None:
 
-    if inspect.isawaitable(normalized):
-        aiter = await normalized
-    else:
-        aiter = normalized
+            self._embedding_dim_hint = dim
 
-    if not _is_async_iterator(aiter):
-        raise TypeError(
-            f"Resolved value not an AsyncIterator [{ErrorCodes.BAD_ASYNC_ITERATOR_SHAPE}]"
-        )
-
-    async for chunk in aiter:
-        yield chunk
 ```
 
-**Rationale (Option A):**
-- LlamaIndex and Semantic Kernel often plug directly into application code that assumes strict typing and clear failure modes.
-- A small, explicit normalization layer yields clearer, framework-specific error codes (`BAD_ASYNC_ITERATOR_SHAPE`) if something upstream regresses, while still relying on the translator for the core streaming contract.
+**Dimension hint vs known dimension (Normative):**
 
----
+* A **dimension hint** is best-effort observability and MUST NOT be assumed correct for output synthesis.
 
-#### 4.9.2. Option B — Translator-Level Normalization Only (ACCEPTABLE for AutoGen, CrewAI, LangChain)
+* A **known embedding dimension** is required when an adapter synthesizes outputs (e.g., zero vectors) or enforces a fixed output dimension via padding/truncation.
 
-If the adapter trusts that `GraphTranslator.arun_query_stream()` (or the corresponding streaming primitive) always returns a valid `AsyncIterator` (or an awaitable resolving to one), it MAY skip explicit adapter-level normalization and directly iterate:
+**Allowed strategies for obtaining known dimension (Normative):**
 
-```python
-async def astream_query(self, ...):
-    async for chunk in self._translator.arun_query_stream(...):
-        yield chunk
-```
+* Adapters MAY require `embedding_dimension` as a constructor argument if the underlying adapter cannot provide a dimension (common in LlamaIndex and Semantic Kernel implementations).
 
-In this mode:
-- The translator remains responsible for enforcing the streaming contract.
-- Any exceptions arising from invalid shapes are still captured and enriched by the shared error-context decorators surrounding the streaming method.
+* Adapters MAY probe the underlying embedder to infer a dimension when needed (e.g., embedding a sentinel like `"x"` for query-empty handling), as long as this probing is SIEM-safe and does not log raw text.
 
-**Rationale (Option B):**
-- AutoGen, CrewAI, and LangChain streaming APIs are typically closer to "internal plumbing," where additional type guards in the adapter provide less marginal value compared to LlamaIndex/Semantic Kernel public surfaces.
-- Relying solely on translator-level normalization keeps adapter code simpler while still benefiting from centralized contract enforcement and error-context enrichment.
-```
+* Adapters MAY enforce a fixed output dimension via truncation/padding when an explicit `embedding_dimension` override is provided (Semantic Kernel pattern).
 
 ### 4.10. Batch Processing Semantics (MUST)
 
