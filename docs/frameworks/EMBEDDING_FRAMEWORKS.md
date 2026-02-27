@@ -1,13 +1,20 @@
 # EMBEDDING FRAMEWORK ADAPTERS SPECIFICATION
 
-**specification_version:** `1.0.0`   
-**protocol_version:** `1.0.0` 
+**specification_version:** `1.1.0`
+**protocol_version:** `1.0.0`
 
 ---
 
 ## Abstract
 
 This specification defines the Corpus Framework Adapter Suite: a standardized set of production-grade adapters that bridge Corpus Embedding Protocol V1.0 implementations with five leading AI orchestration frameworks—AutoGen, CrewAI, LangChain, LlamaIndex, and Semantic Kernel. The suite provides consistent patterns for context propagation, error handling, observability, and resource management across frameworks while preserving each framework's native interfaces. This document includes normative contracts for adapter behavior, cross-framework patterns, error taxonomy integration, observability requirements, and implementation guidelines for enterprise-scale deployments.
+
+**Companion Documents and Precedence (Normative):**
+
+* **SCHEMA.md** is authoritative for wire-format envelopes, JSON field names/types, required fields, and closed-envelope strictness.
+* **PROTOCOLS.md** is authoritative for operational semantics (deadlines, streaming terminal rules, idempotency semantics where applicable).
+* **ERRORS.md** is authoritative for canonical error taxonomy, retry guidance, and code normalization rules.
+* **METRICS.md** is authoritative for metrics taxonomy, labels, and final-outcome reporting.
 
 > **Keywords:** Framework Adapters, AutoGen, CrewAI, LangChain, LlamaIndex, Semantic Kernel, Embeddings, Context Propagation, Error Normalization, Observability, Multi-Framework, Protocol Bridge, Production Hardening
 
@@ -28,14 +35,14 @@ This specification defines the Corpus Framework Adapter Suite: a standardized se
   * [4.4. Dynamic Context Extraction Pattern](#44-dynamic-context-extraction-pattern)
   * [4.5. Coercion Pipeline (MUST)](#45-coercion-pipeline-must)
   * [4.6. Thread-Safe Lazy Initialization (MUST)](#46-thread-safe-lazy-initialization-must)
-  * [4.7. Resource Cleanup Hierarchy (MUST)](#47-resource-cleanup-hierarchy-must)
+  * [4.7. Resource Cleanup (MUST)](#47-resource-cleanup-must)
   * [4.8. Event Loop Guards (MUST)](#48-event-loop-guards-must)
   * [4.9. Dimension Management (SHOULD)](#49-dimension-management-should)
   * [4.10. Batch Processing Semantics (MUST)](#410-batch-processing-semantics-must)
-  * [4.11. Empty Text Handling (MUST)](#411-empty-text-handling-must)
+  * [4.11. Empty Text Handling (MUST with Framework-Specific Scope)](#411-empty-text-handling-must-with-framework-specific-scope)
   * [4.12. SIEM-Safe Observability (MUST)](#412-siem-safe-observability-must)
   * [4.13. Testing Accommodations (INFORMATIVE)](#413-testing-accommodations-informative)
-  * [4.14. Adapter Lifecycle State Machine (MUST)](#414-adapter-lifecycle-state-machine-must)
+  * [4.14. Adapter Lifecycle (RECOMMENDED)](#414-adapter-lifecycle-recommended)
 * [5. Shared Utility Layer](#5-shared-utility-layer)
   * [5.1. Validation Utilities](#51-validation-utilities)
   * [5.2. Snapshot Utilities](#52-snapshot-utilities)
@@ -51,6 +58,8 @@ This specification defines the Corpus Framework Adapter Suite: a standardized se
   * [6.6. Backpressure Integration](#66-backpressure-integration)
   * [6.7. Embedding Determinism (MUST)](#67-embedding-determinism-must)
   * [6.8. Translator Shim Equivalence (MUST)](#68-translator-shim-equivalence-must)
+  * [6.9. Private Kwarg Filtering (MUST)](#69-private-kwarg-filtering-must)
+  * [6.10. Bounded Context Arrays (SHOULD)](#610-bounded-context-arrays-should)
 * [7. AutoGen Adapter Specification](#7-autogen-adapter-specification)
   * [7.1. Overview](#71-overview)
   * [7.2. Framework-Specific Challenges](#72-framework-specific-challenges)
@@ -173,11 +182,11 @@ This specification defines the Corpus Framework Adapter Suite: a standardized se
 
 The AI framework landscape has fragmented into five dominant orchestration layers—AutoGen for multi-agent systems, CrewAI for role-based agent teams, LangChain for chain-of-thought pipelines, LlamaIndex for RAG and indexing, and Semantic Kernel for enterprise AI integration. Each framework defines its own embedding interface with subtly different expectations:
 
-- **AutoGen** requires Chroma-compatible `embedding_function` callables and struggles with async/sync boundaries in agent loops.
-- **CrewAI** expects embedders attached to agents but provides no shared runtime context across agent executions.
-- **LangChain** defines `Embeddings` as Pydantic models but allows sync methods to be called from async contexts, creating deadlock risks.
-- **LlamaIndex** implements `BaseEmbedding` as a Pydantic model with strict initialization order requirements that crash when attributes are set too early.
-- **Semantic Kernel** uses `EmbeddingGeneratorBase` with Pydantic constraints and multiple registration paths across versions.
+* **AutoGen** requires Chroma-compatible `embedding_function` callables and struggles with async/sync boundaries in agent loops.
+* **CrewAI** expects embedders attached to agents but provides no shared runtime context across agent executions.
+* **LangChain** defines `Embeddings` as Pydantic models but allows sync methods to be called from async contexts, creating deadlock risks.
+* **LlamaIndex** implements `BaseEmbedding` as a Pydantic model with strict initialization order requirements that crash when attributes are set too early.
+* **Semantic Kernel** uses `EmbeddingGeneratorBase` with Pydantic constraints and multiple registration paths across versions.
 
 Building and maintaining separate adapters for each framework duplicates effort, fragments observability, and creates inconsistent error handling across an organization's AI stack. Framework-specific edge cases—like Chroma calling sync methods from event loops, or Pydantic rejecting undeclared attributes—cause production outages that are difficult to debug without deep framework expertise.
 
@@ -199,27 +208,27 @@ This specification defines five framework adapters:
 
 All adapters share:
 
-- **Context propagation** — Framework-specific context (agent_name, task_id, run_id, node_ids, plugin_name) flows into `OperationContext` and framework_ctx.
-- **Error normalization** — All exceptions are enriched with `attach_context()` using framework-specific error codes.
-- **Observability** — Dynamic context extraction captures batch sizes, empty texts, routing fields, and dimension hints.
-- **Resource management** — Sync/async context managers with proper cleanup hierarchy.
-- **Dimension management** — First-write-wins dimension hints and empty-text zero vectors.
+* **Context propagation** — Framework-specific context (agent_name, task_id, run_id, node_ids, plugin_name) flows into `OperationContext` and framework_ctx.
+* **Error normalization** — All exceptions are enriched with `attach_context()` using framework-specific error codes.
+* **Observability** — Dynamic context extraction captures batch sizes, empty texts, routing fields, and dimension hints.
+* **Resource management** — Sync/async context managers with proper cleanup hierarchy.
+* **Dimension management** — Dimension hint for observability; known dimension for zero-vector synthesis where implemented.
 
 ### 1.3. Design Philosophy
 
-- **Protocol-First (MUST).** Adapters require only duck-typed `embed` methods, not strict inheritance from Corpus base classes. This allows minimal test doubles and lightweight integrations.
+* **Protocol-First (MUST).** Adapters require only duck-typed `embed` methods, not strict inheritance from Corpus base classes. This allows minimal test doubles and lightweight integrations.
 
-- **Framework Resilience (MUST).** Adapters defend against framework evolution by filtering context, normalizing inputs, and never assuming internal APIs remain stable. Static compatibility methods satisfy Chroma's serialization probes without leaking implementation details.
+* **Framework Resilience (MUST).** Adapters defend against framework evolution by filtering context, normalizing inputs, and never assuming internal APIs remain stable. Static compatibility methods satisfy Chroma's serialization probes without leaking implementation details.
 
-- **Observability-First (MUST).** Every embedding operation attaches rich error context: framework identity, model info, batch sizes, empty text counts, and routing fields. Exceptions crossing framework boundaries carry enough context to debug without log scraping.
+* **Observability-First (MUST).** Every embedding operation attaches rich error context: framework identity, model info, batch sizes, empty text counts, and routing fields. Exceptions crossing framework boundaries carry enough context to debug without log scraping.
 
-- **Fail-Safe Context Translation (MUST).** Context translation from framework-specific structures to `OperationContext` must never break embeddings. If translation fails, adapters proceed without core context and attach diagnostic snapshots.
+* **Fail-Safe Context Translation (MUST).** Context translation from framework-specific structures to `OperationContext` must never break embeddings. If translation fails, adapters proceed without core context and attach diagnostic snapshots.
 
-- **Strict by Default (SHOULD).** Non-string inputs in batch operations are rejected with `TypeError` to avoid silently embedding `repr()` output. Lenient modes (`strict_text_types=False`) are available but must preserve row alignment with zero vectors.
+* **Strict by Default with Lenient Options (SHOULD).** Non-string inputs in batch operations are rejected with `TypeError` to avoid silently embedding `repr()` output. Lenient modes (`strict_text_types=False`) preserve row alignment with zero vectors where dimension is known.
 
-- **Async-Safe Sync Usage (MUST).** Sync APIs enforce guard rails preventing calls from inside active event loops. When bridging is required for tests, adapters use controlled worker-thread execution.
+* **Async-Safe Sync Usage (MUST).** Sync APIs must never run on the event loop thread. When bridging is required for framework compatibility, adapters use controlled worker-thread execution.
 
-- **Production Hardening (MUST).** Thread-safe lazy initialization, resource cleanup hierarchies, SIEM-safe logging, and dimension consistency are non-negotiable requirements.
+* **Production Hardening (MUST).** Thread-safe lazy initialization, resource cleanup, SIEM-safe logging, and dimension consistency are non-negotiable requirements.
 
 ---
 
@@ -227,11 +236,12 @@ All adapters share:
 
 The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "SHOULD NOT", "RECOMMENDED", "NOT RECOMMENDED", "MAY", and "OPTIONAL" in this document are to be interpreted as described in BCP 14 [RFC2119] [RFC8174] when, and only when, they appear in all capitals.
 
-**Example:**  
-- "The adapter MUST reject non‑string inputs" indicates a strict requirement that must be implemented and verified.  
-- "The adapter SHOULD log warnings for large batches" indicates a recommendation that may be deviated from only with good reason.  
+**Example:**
 
-**Justified Deviation Example:**  
+* "The adapter MUST reject non-string inputs" indicates a strict requirement that must be implemented and verified.
+* "The adapter SHOULD log warnings for large batches" indicates a recommendation that may be deviated from only with good reason.
+
+**Justified Deviation Example:**
 A developer might choose to disable the `strict_text_types` validation (which is a SHOULD-level recommendation) in a controlled environment where they have verified that all inputs are strings, and where the performance cost of validation is significant. This deviation MUST be documented in the code, explaining why it is safe and what assumptions are being made. The adapter MUST still provide a way to re-enable strict validation (e.g., via a configuration flag) because the default behavior is RECOMMENDED.
 
 ---
@@ -252,9 +262,11 @@ A developer might choose to disable the `strict_text_types` validation (which is
 
 **Coercion Pipeline** — Shared utilities that validate and convert raw embedding results into `List[List[float]]` or `List[float]` with consistent error codes.
 
-**Event Loop Guard** — Runtime check preventing sync methods from being called inside an active asyncio event loop.
+**Event Loop Guard** — Runtime check preventing sync methods from being called on an active asyncio event loop thread.
 
-**Dimension Hint** — Best-effort, first-write-wins embedding dimension stored for observability and zero-vector fallback.
+**Dimension Hint** — Best-effort, first-write-wins embedding dimension stored for observability only; MUST NOT be used for correctness unless explicitly configured as a known dimension.
+
+**Known Embedding Dimension** — Dimension that is guaranteed correct for synthesis/padding/truncation operations, obtained via explicit configuration override and/or adapter method like `get_embedding_dimension()`.
 
 **SIEM-Safe** — Observability that excludes PII, raw content, and tenant identifiers, using hashes and structural metadata instead.
 
@@ -300,13 +312,13 @@ All adapters implement three defensive layers:
 
 Every adapter MUST decorate its core embedding methods with error-context decorators that capture:
 
-- Operation name (`embedding_documents`, `embedding_query`, `capabilities`, `health`)
-- Framework identity and version
-- Model identifier
-- Text length (for single-text operations)
-- Batch size and empty text count (for batch operations)
-- Framework-specific routing fields
-- Dimension hint (when available)
+* Operation name label (stable within an adapter)
+* Framework identity and version
+* Model identifier
+* Text length (for single-text operations)
+* Batch size and empty text count (for batch operations)
+* Framework-specific routing fields
+* Dimension hint (when available, for observability)
 
 ```python
 @with_embedding_error_context("documents")
@@ -315,6 +327,13 @@ def embed_documents(self, texts, ...): ...
 @with_async_embedding_error_context("query")
 async def aembed_query(self, text, ...): ...
 ```
+
+**Operation Naming Contract (Normative):**
+
+* Operation name labels are **implementation-defined** and may differ across adapters, as long as they are stable within a given adapter implementation.
+* If a framework's compatibility tests require exact operation labels, the adapter MUST use those exact labels.
+  * **Semantic Kernel** adapters MUST use `"embedding_documents"` and `"embedding_query"` for the primary embedding operations, as tests may assert these values.
+  * **Capabilities/Health** operations MAY use `"capabilities"`, `"health"`, or prefixed variants like `"embedding_capabilities"`.
 
 ### 4.4. Dynamic Context Extraction Pattern
 
@@ -333,8 +352,8 @@ def _extract_dynamic_context(self, args, kwargs, operation):
         maybe_texts = args[0]
         if isinstance(maybe_texts, Sequence) and not isinstance(maybe_texts, (str, bytes)):
             ctx["texts_count"] = len(maybe_texts)
-            # Count empty strings
-            empty_count = sum(1 for t in maybe_texts if not isinstance(t, str) or not t.strip())
+            # Count empty strings or non-string items (treated as empty for counting only)
+            empty_count = sum(1 for t in maybe_texts if (not isinstance(t, str)) or (not t.strip()))
             if empty_count:
                 ctx["empty_texts_count"] = empty_count
     
@@ -350,6 +369,20 @@ def _extract_dynamic_context(self, args, kwargs, operation):
 ```
 
 **Versioning Contract:** Framework context dictionaries (e.g., `autogen_context`, `crewai_context`) MAY contain keys unknown to the adapter. Adapters MUST ignore such keys and MUST NOT raise errors because of them. This ensures forward compatibility when frameworks add new fields.
+
+**Private kwargs filtering (Normative):**
+
+* Adapters MAY accept additional `**kwargs` for forward compatibility and per-call hints.
+* Keys prefixed with `_` are **private** and MUST NOT be propagated into `framework_ctx` or `OperationContext.attrs`. These keys MAY be used internally by the adapter and MAY be snapshotted for debugging in a SIEM-safe manner.
+
+**Snapshotting of bulky/sensitive fields (Normative):**
+
+* For large or sensitive objects commonly passed via framework configs (e.g., `tags`, `metadata`, `configurable`), adapters SHOULD store only **snapshots** (e.g., `tags_snapshot`, `metadata_snapshot`, `configurable_snapshot`) rather than raw objects in `framework_ctx` and error context.
+
+**Invalid context type behavior (Normative, per-framework):**
+
+* **CrewAI** MUST raise `ValueError` on invalid context types (strict validation).
+* **AutoGen, LangChain, LlamaIndex, Semantic Kernel** MUST ignore invalid context types with a warning and continue embedding.
 
 ### 4.5. Coercion Pipeline (MUST)
 
@@ -373,30 +406,35 @@ def _coerce_embedding_vector(self, result):
     )
 ```
 
-**Coercion Failure Conditions (Normative):**  
+**Coercion Failure Conditions (Normative):**
 The coercion utilities MUST detect and raise appropriate errors for the following conditions:
 
-- **Shape mismatch:** For matrix coercion, if the result is not a list of lists (or equivalent sequence of sequences). For vector coercion, if the result is not a list of numbers.
-- **Non-float elements:** Any element that is not a `float` or cannot be converted to float without loss (e.g., string `"nan"` is not acceptable).
-- **NaN or Inf values:** If any element is `math.nan` or `math.inf` (or negative infinity), the adapter MUST raise a `ValueError` with an error code indicating invalid embedding result. (Zero vectors are only allowed for empty texts as per §4.11.)
-- **Dimension mismatch:** If the embedding dimension is known (from previous calls or explicit `embedding_dimension`), and the coerced vector has a different length, the adapter MUST raise a `ValueError`.
-
-These conditions are verified by the conformance test suite (§16.3.1).
+* **Shape mismatch:** For matrix coercion, if the result is not a list of lists (or equivalent sequence of sequences). For vector coercion, if the result is not a list of numbers.
+* **Non-float elements:** Any element that is not a `float` or cannot be converted to float without loss (e.g., string `"nan"` is not acceptable).
+* **NaN or Inf values:** If any element is `math.nan` or `math.inf` (or negative infinity), the adapter MUST raise a `ValueError` with an error code indicating invalid embedding result. (Zero vectors are only allowed for empty texts as per §4.11 where the adapter implements that policy.)
+* **Dimension mismatch:** If the embedding dimension is known (from previous calls, explicit `embedding_dimension`, or adapter-specific enforced dimension policy), and the coerced vector has a different length, the adapter MUST raise a `ValueError`.
 
 ### 4.6. Thread-Safe Lazy Initialization (MUST)
 
-Translators and other expensive resources MUST be initialized lazily with thread safety:
+Translators and other expensive resources MUST be initialized lazily with thread safety.
+
+**Reference implementation pattern:**
 
 ```python
 @cached_property
 def _translator(self):
+    # cached_property ensures the value is stored in __dict__ exactly once,
+    # but we still guard construction to avoid duplicate initialization in races.
     with self._lock:
-        if self._translator_cache is None:
-            self._translator_cache = create_embedding_translator(...)
-        return self._translator_cache
+        existing = self.__dict__.get("_translator")
+        if existing is not None:
+            return existing
+        translator = create_embedding_translator(...)
+        self.__dict__["_translator"] = translator
+        return translator
 ```
 
-### 4.7. Resource Cleanup Hierarchy (MUST)
+### 4.7. Resource Cleanup (MUST)
 
 All adapters MUST implement both sync and async context managers with proper cleanup:
 
@@ -405,30 +443,30 @@ def __enter__(self):
     return self
 
 def __exit__(self, exc_type, exc, tb):
-    self.close()
+    # Best-effort cleanup for resources
+    self._cleanup_sync()
 
 async def __aenter__(self):
     return self
 
 async def __aexit__(self, exc_type, exc, tb):
-    await self.aclose()
-
-def close(self):
-    _ensure_not_in_event_loop("close")
-    _maybe_close_sync(self._translator_cache)
-    _maybe_close_sync(self.corpus_adapter)
-
-async def aclose(self):
-    await _maybe_close_async(self._translator_cache)
-    await _maybe_close_async(self.corpus_adapter)
+    # Best-effort cleanup for resources
+    await self._cleanup_async()
 ```
 
-**Thread Safety of close():**  
-The `close()` and `aclose()` methods MUST be thread-safe and idempotent. If called concurrently from multiple threads, the cleanup must happen exactly once, and subsequent calls must have no effect. Implementations SHOULD use a lock to guard the cleanup logic and mark the instance as closed before releasing the lock.
+**Cleanup Requirements (Normative):**
+
+* Adapters MUST clean up the translator if it was constructed.
+* Adapters SHOULD attempt to clean up the underlying `corpus_adapter` best-effort, but MAY omit this if the framework lifecycle does not safely permit it.
+* Cleanup MUST be thread-safe and idempotent.
+* If cleanup is invoked concurrently from multiple threads, the adapter MUST ensure resources are released at most once, and subsequent calls have no effect.
+* Adapters MAY implement explicit `close()`/`aclose()` methods, but context-manager cleanup is sufficient.
 
 ### 4.8. Event Loop Guards (MUST)
 
-All sync methods MUST prevent execution inside running event loops:
+**Core rule (Normative):** Sync operations MUST NOT execute on the event loop thread.
+
+Baseline guard:
 
 ```python
 def _ensure_not_in_event_loop(sync_api_name, async_alternative=None):
@@ -440,34 +478,54 @@ def _ensure_not_in_event_loop(sync_api_name, async_alternative=None):
     raise RuntimeError(f"{sync_api_name} called from event loop. {suggestion}")
 ```
 
+**Bridging allowances (Normative, per-framework):**
+
+* **LangChain:** Sync methods MAY transparently execute via worker thread when called inside an active event loop, to preserve compatibility with LangChain runtime/test behavior.
+* **Semantic Kernel:** Convenience sync aliases (`embed_documents`, `embed_query`) MAY bridge by executing the async variant in a dedicated worker thread.
+* **AutoGen:** When `_allow_chromadb_in_event_loop=True`, `__call__` and legacy `embed_query(input=[...])` flows MAY bridge via thread pool.
+* **CrewAI, LlamaIndex:** Sync methods MUST hard-refuse execution on the event loop thread (no bridging).
+
 ### 4.9. Dimension Management (SHOULD)
 
-Adapters SHOULD track embedding dimension on first successful embed:
+Adapters SHOULD track embedding dimension on first successful embed for **observability only**:
 
 ```python
 def _update_dim_hint(self, dim):
-    if dim is None or self._embedding_dim_hint is not None:
+    if dim is None:
+        return
+    if self._embedding_dim_hint is not None:
         return
     with self._lock:
         if self._embedding_dim_hint is None:
             self._embedding_dim_hint = dim
 ```
 
-For adapters that require known dimensions (LlamaIndex, Semantic Kernel), callers MUST provide `embedding_dimension` if the underlying adapter lacks `get_embedding_dimension()`.
+**Dimension hint vs known dimension (Normative):**
+
+* A **dimension hint** is best-effort observability and MUST NOT be assumed correct for output synthesis.
+* A **known embedding dimension** is required when an adapter synthesizes outputs (e.g., zero vectors) or enforces a fixed output dimension via padding/truncation.
+
+**Allowed strategies for obtaining known dimension (Normative):**
+
+* Adapters MAY require `embedding_dimension` as a constructor argument if the underlying adapter cannot provide a dimension (common in LlamaIndex and Semantic Kernel implementations).
+* Adapters MAY probe the underlying embedder to infer a dimension when needed (e.g., embedding a sentinel like `"x"` for query-empty handling), as long as this probing is SIEM-safe and does not log raw text.
+* Adapters MAY enforce a fixed output dimension via truncation/padding when an explicit `embedding_dimension` override is provided (Semantic Kernel pattern).
 
 ### 4.10. Batch Processing Semantics (MUST)
 
 Batch operations MUST:
 
 1. Return empty list for empty input
-2. Validate all items are strings when `strict_text_types=True`
+2. Validate all items are strings when `strict_text_types=True` (if the adapter exposes this behavior)
 3. Warn on extremely large batches (configurable threshold)
 4. Preserve input order in output
 5. Handle partial failures according to §6.5
 
-**Default and Maximum Batch Sizes (Normative):**  
-- Adapters SHOULD log a warning when a batch exceeds `DEFAULT_BATCH_WARN_THRESHOLD = 1000` items.
-- Adapters MUST enforce a maximum batch size of `MAX_BATCH_SIZE = 10000` items, unless explicitly overridden by configuration (with appropriate warnings). Exceeding this limit MUST result in a `ValueError`.
+**Default and Maximum Batch Sizes (Normative):**
+
+* Adapters SHOULD log a warning when a batch exceeds `DEFAULT_BATCH_WARN_THRESHOLD = 1000` items.
+* Adapters MAY enforce a maximum batch size (e.g., `MAX_BATCH_SIZE = 10000`), but hard enforcement is implementation-defined and may be handled at the translator layer. If a hard maximum is enforced, exceeding it MUST result in a `ValueError` and SHOULD include contextual details (op name, batch size, max size).
+* Adapters MUST NOT silently truncate the input batch.
 
 ```python
 if not texts_list:
@@ -477,39 +535,54 @@ if self.strict_text_types:
     _validate_texts_are_strings(texts_list, op_name="embed_documents")
 
 self._warn_if_extreme_batch(texts_list, op_name="embed_documents")
-if len(texts_list) > self.max_batch_size:
-    raise ValueError(f"Batch size {len(texts_list)} exceeds maximum {self.max_batch_size}")
 ```
 
-### 4.11. Empty Text Handling (MUST)
+### 4.11. Empty Text Handling (MUST with Framework-Specific Scope)
 
-Single-text operations on empty or whitespace-only strings MUST return zero vectors of the correct dimension:
+**Empty batch input (Normative):**
 
-```python
-def _handle_empty_text(self, text):
-    dim = self.embedding_dimension
-    logger.warning("Empty text, returning zero vector (dim=%d)", dim)
-    return [0.0] * dim
-```
+* Batch operations MUST return `[]` for empty input batches.
 
-Batch operations in lenient mode (`strict_text_types=False`) MUST insert zero vectors for non-string or empty items to preserve row alignment.
+**Whitespace is empty (Normative):**
 
-**Note:** Zero vectors are only allowed for empty texts. If an embedding result from the underlying adapter contains NaN or Inf, it MUST be treated as a coercion failure (see §4.5) and an error raised.
+* An empty string `""` or a whitespace-only string (e.g., `"   "`) MUST be treated as empty for the purposes of counting, validation, and (where supported) zero-vector insertion.
+
+**Zero-vector synthesis is adapter-defined (Normative):**
+
+* Adapters that implement empty-text synthesis MUST return zero vectors of the correct **known embedding dimension** for empty/whitespace-only inputs.
+* Adapters that do not implement synthesis MAY delegate empty-text behavior to the underlying translator/adapter, and MUST document that they do not guarantee zero vectors for empty strings.
+
+**Framework-Specific Empty Text Guarantees:**
+
+| Framework        | Query Empty Guarantee | Batch Empty Guarantee | Dimension Source           |
+| ---------------- | --------------------- | --------------------- | -------------------------- |
+| AutoGen          | No (delegates)        | No (delegates)        | N/A                        |
+| CrewAI           | No (delegates)        | No (delegates)        | N/A                        |
+| LangChain        | Yes (zero vector)     | No (delegates)        | Probe with "x" or known    |
+| LlamaIndex       | Yes (zero vector)     | Yes (zero vector)     | Known dimension required   |
+| Semantic Kernel  | Yes (zero vector)     | Yes (zero vector)     | Known dimension or override|
+
+**Row alignment for lenient batches (Normative where the adapter supports lenient mode):**
+
+* For adapters that support `strict_text_types=False`, batch embedding MUST preserve row alignment.
+* In lenient mode, non-string items and empty/whitespace strings MUST map to zero-vector rows (of correct known dimension) **if the adapter implements zero-vector synthesis**.
+  * If the adapter does not implement synthesis, it MAY delegate behavior to the underlying layer, but MUST still preserve output row alignment if it claims row-aligned semantics.
 
 ### 4.12. SIEM-Safe Observability (MUST)
 
 All logging MUST:
 
-- Never log raw text, vectors, or tenant identifiers
-- Use `_safe_snapshot()` to truncate long strings and limit container sizes
-- Include `tenant_hash` instead of raw tenant
-- Log operation completion with dimensions and latency
+* Never log raw text, vectors, or tenant identifiers
+* Use `_safe_snapshot()` to truncate long strings and limit container sizes
+* Include `tenant_hash` instead of raw tenant
+* Log operation completion with dimensions and latency
 
-**`_safe_snapshot` thresholds (Normative):**  
+**`_safe_snapshot` thresholds (Normative):**
 Implementations MUST use at least the following truncation limits:
-- Strings longer than `MAX_STRING_LENGTH = 5000` characters MUST be truncated to that length.
-- Containers (lists, dicts) with more than `MAX_CONTAINER_ITEMS = 200` items MUST be limited to that many items (with an indication of truncation).  
-These are minimum requirements; implementations MAY use stricter limits.
+
+* Strings longer than `MAX_STRING_LENGTH = 5000` characters MUST be truncated to that length.
+* Containers (lists, dicts) with more than `MAX_CONTAINER_ITEMS = 200` items MUST be limited to that many items (with an indication of truncation).
+  These are minimum requirements; implementations MAY use stricter limits.
 
 ```python
 logger.debug(
@@ -522,38 +595,33 @@ logger.debug(
 
 Adapters SHOULD support test injection:
 
-- Translator can be monkeypatched via `_translator` setter
-- Context building can be overridden in test subclasses
-- Dimension hints are observable via `_embedding_dim_hint`
-- Error codes are exposed for assertion
+* Translator can be monkeypatched via `_translator` setter (where present)
+* Context building can be overridden in test subclasses
+* Dimension hints are observable via `_embedding_dim_hint`
+* Error codes are exposed for assertion
 
-### 4.14. Adapter Lifecycle State Machine (MUST)
+### 4.14. Adapter Lifecycle (RECOMMENDED)
 
-Each adapter instance MUST maintain a clear lifecycle with the following states and transitions:
+Adapters SHOULD maintain a clear lifecycle with the following states and transitions:
 
-- **`UNINITIALIZED`** (initial state after `__init__`, before any lazy initialization)
-- **`INITIALIZED`** (after first use, lazy resources created)
-- **`CLOSED`** (after `close()` or `aclose()` is called)
+* **`UNINITIALIZED`** (initial state after `__init__`, before any lazy initialization)
+* **`INITIALIZED`** (after first use, lazy resources created)
+* **`CLOSED`** (after cleanup is performed, when applicable)
 
-**Valid Transitions:**
-- `UNINITIALIZED` → `INITIALIZED`: automatically when any embedding operation is first invoked.
-- `UNINITIALIZED` → `CLOSED`: via `close()` or `aclose()`.
-- `INITIALIZED` → `CLOSED`: via `close()` or `aclose()`.
-- `CLOSED` → (no transitions allowed; instance is considered dead).
+**Valid Transitions (Recommended):**
 
-**Illegal States:**
-- Attempting any embedding operation (including `embed_documents`, `embed_query`, their async variants, `capabilities`, `health`) after `CLOSED` MUST raise a `RuntimeError` with a message indicating the adapter is closed.
-- Calling `close()` or `aclose()` multiple times is allowed and MUST be idempotent (no error, subsequent calls have no effect).
-- Calling `close()` from within an async context (i.e., while an event loop is running) MUST raise `RuntimeError` unless the adapter is designed to handle that (e.g., AutoGen's Chroma bridge). In general, sync `close()` should enforce event loop guard.
+* `UNINITIALIZED` → `INITIALIZED`: automatically when any embedding operation is first invoked.
+* `UNINITIALIZED` → `CLOSED`: via cleanup path (if implemented).
+* `INITIALIZED` → `CLOSED`: via cleanup path (if implemented).
 
-**Behavior After Close:**  
-- All resources (translator, underlying corpus_adapter) are released.
-- The adapter instance should be considered unusable; any further method calls (except `__enter__`/`__exit__` which are part of context manager protocol) must raise.
+**Note:** This lifecycle guidance is RECOMMENDED but not REQUIRED. Adapters that rely on context-manager-only cleanup MAY not expose a CLOSED state; in such cases, behavior after context exit is implementation-defined, but adapters SHOULD avoid use-after-cleanup patterns.
 
-**Partial Initialization Failure:**  
-If an exception occurs during `__init__` after some resources have been allocated (e.g., a lock created but validation fails), the adapter MUST clean up any successfully allocated resources before propagating the exception. Implementations SHOULD use a try/finally block or a context manager to ensure cleanup. After a failed `__init__`, the object is considered not constructed and MUST NOT be used; no lifecycle state is defined. Callers must ensure that if `__init__` raises, the object reference is discarded.
+**Idempotent cleanup remains REQUIRED:**
 
-This lifecycle ensures predictable resource management and aids in debugging.
+* Calling cleanup multiple times is allowed and MUST be idempotent (no error, subsequent calls have no effect).
+
+**Partial Initialization Failure:**
+If an exception occurs during `__init__` after some resources have been allocated, the adapter MUST clean up any successfully allocated resources before propagating the exception.
 
 ---
 
@@ -623,11 +691,11 @@ EMBEDDING_COERCION_ERROR_CODES = CoercionErrorCodes(
 ```python
 def _maybe_close_sync(obj: Any) -> None:
     """Best-effort sync cleanup with priority: aclose() → close()."""
-    # Implementation handles coroutines via asyncio.run()
+    # Implementation handles coroutines via asyncio.run() in non-event-loop contexts
 
 async def _maybe_close_async(obj: Any) -> None:
     """Best-effort async cleanup with priority: aclose() → close()."""
-    # Implementation offloads sync close to thread pool
+    # Implementation offloads sync close to thread pool if needed
 ```
 
 ---
@@ -654,9 +722,10 @@ except Exception as e:
 ### 6.2. Consistent Observability
 
 All adapters emit:
-- One `observe` metric per operation (including streaming)
-- Structured logs with `tenant_hash`, operation, latency, dimensions
-- Distributed trace context via `traceparent`
+
+* One `observe` metric per operation (including streaming)
+* Structured logs with `tenant_hash`, operation, latency, dimensions
+* Distributed trace context via `traceparent`
 
 ### 6.3. Operation Context Propagation
 
@@ -666,6 +735,11 @@ Framework-specific context flows into `OperationContext` via translation helpers
 framework_context → context_from_framework() → OperationContext
 ```
 
+**Context Translation Gates (Normative):**
+
+* Adapters MAY gate inclusion of `_operation_context` in `framework_ctx` via configuration flags (e.g., `enable_agent_context_propagation` in CrewAI, `enable_operation_context_propagation` in LangChain).
+* When translation fails, adapters MAY fall back to an empty `OperationContext()` if `fallback_to_simple_context=True`, or proceed with `None` context.
+
 ### 6.4. Idempotency Semantics
 
 When `idempotency_key` is provided in operation context, adapters MUST ensure exactly-once semantics for mutating operations (embeddings are read-only, so idempotency applies to token counting and health checks where supported).
@@ -674,57 +748,26 @@ When `idempotency_key` is provided in operation context, adapters MUST ensure ex
 
 Batch operations MAY experience partial failures (e.g., some texts succeed, some fail). The adapter MUST handle these according to the following rules:
 
-- If the underlying translator returns a structured result containing partial failures (as defined in the Corpus Embedding Protocol), the adapter MUST:
-  - Return the embeddings for the successful items, and insert zero vectors for the failed items (to preserve row alignment).
-  - Log each failure with sufficient detail (index, error code, message) using the observability system.
-  - Not raise an exception unless all items fail (in which case an exception summarizing the failures SHOULD be raised).
-
-- The JSON structure shown in the example is for observability/logging only; it is NOT the return type of the embedding methods. Embedding methods return a list of vectors (or raise an exception). The observability layer may capture the partial failure details and include them in logs/metrics.
-
-```json
-// Example log entry for partial failure (observability)
-{
-  "ok": true,
-  "code": "OK",
-  "ms": 38.4,
-  "result": {
-    "processed_count": 2,
-    "failed_count": 1,
-    "failures": [
-      {
-        "index": 2,
-        "error": "TEXT_TOO_LONG",
-        "detail": "Input exceeds max_text_length"
-      }
-    ],
-    "embeddings": [...]   // not logged, but present in return value
-  }
-}
-```
+* If the underlying translator returns a structured result containing partial failures (as defined in the Corpus Embedding Protocol), the adapter MUST:
+  * Return the embeddings for the successful items, and insert zero vectors for the failed items (to preserve row alignment) **when the adapter implements zero-vector synthesis and has a known embedding dimension**.
+  * Log each failure with sufficient detail (index, error code, message) using the observability system.
+  * Not raise an exception unless all items fail (in which case an exception summarizing the failures SHOULD be raised).
 
 ### 6.6. Backpressure Integration
 
 Adapters SHOULD:
-- Surface `ResourceExhausted` with `retry_after_ms` when rate-limited
-- Include `throttle_scope` in error details
-- Propagate backpressure hints from underlying provider
+
+* Surface `ResourceExhausted` with `retry_after_ms` when rate-limited
+* Include `throttle_scope` in error details
+* Propagate backpressure hints from underlying provider
 
 ### 6.7. Embedding Determinism (MUST)
 
 All adapters MUST produce the same embedding vectors for the same input text and model, within a defined tolerance, **regardless of which framework adapter is used**. This ensures that applications can switch frameworks without changing retrieval behavior.
 
-- **Floating point tolerance:** For the same input text and model, the output vectors from different adapters (or the same adapter across calls) MUST be equal to within **1e-6** in each component (absolute difference ≤ 1e-6).
-- **Normalization equivalence:** If the underlying model produces normalized embeddings, all adapters MUST preserve that normalization. If the model does not normalize, adapters MUST NOT introduce normalization unless explicitly configured to do so (and then it must be consistent across all adapters).
-- **Determinism under identical conditions:** Repeated calls with the same input and same configuration (model, tenant, etc.) MUST produce bitwise‑identical results, unless the underlying provider is non‑deterministic (in which case this requirement is waived but MUST be documented).
-
-**Documentation Requirement for Non‑Deterministic Providers:**  
-If the underlying embedding provider is known to be non‑deterministic (e.g., due to random seeds, hardware fluctuations, or load‑balancing across different model instances), the adapter MUST include a clear statement in its public documentation (e.g., in the class docstring or a separate documentation page) that explains:
-- The name of the provider and the source of non‑determinism.
-- Whether the non‑determinism affects the embedding vectors or only metadata (e.g., timing).
-- Any configuration options that can mitigate non‑determinism (e.g., fixing a random seed, pinning to a specific model replica).
-- The practical impact on applications (e.g., retrieval may vary slightly between runs).
-
-This documentation ensures that users are aware of potential variability and can make informed decisions.
+* **Floating point tolerance:** For the same input text and model, the output vectors from different adapters (or the same adapter across calls) MUST be equal to within **1e-6** in each component (absolute difference ≤ 1e-6).
+* **Normalization equivalence:** If the underlying model produces normalized embeddings, all adapters MUST preserve that normalization. If the model does not normalize, adapters MUST NOT introduce normalization unless explicitly configured to do so (and then it must be consistent across all adapters).
+* **Determinism under identical conditions:** Repeated calls with the same input and same configuration (model, tenant, etc.) MUST produce bitwise-identical results, unless the underlying provider is non-deterministic (in which case this requirement is waived but MUST be documented).
 
 ### 6.8. Translator Shim Equivalence (MUST)
 
@@ -732,11 +775,32 @@ Some adapters (e.g., LlamaIndex, Semantic Kernel) use a `_TranslatorAdapterShim`
 
 Specifically:
 
-- If the underlying adapter implements `embed(texts: Sequence[str], ...)` (raw text mode), the shim MUST correctly extract the raw texts from the EmbedSpec and call the underlying adapter with those texts.
-- If the underlying adapter implements `embed(spec: EmbedSpec, ctx=None, ...)` (full mode), the shim MUST pass the spec through unchanged.
-- In both cases, for the same input texts and operation context, the resulting embeddings MUST be identical (within the tolerance defined in §6.7).
+* If the underlying adapter implements `embed(texts: Sequence[str], ...)` (raw text mode), the shim MUST correctly extract the raw texts from the EmbedSpec and call the underlying adapter with those texts.
+* If the underlying adapter implements `embed(spec: EmbedSpec, ctx=None, ...)` (full mode), the shim MUST pass the spec through unchanged.
+* In both cases, for the same input texts and operation context, the resulting embeddings MUST be identical (within the tolerance defined in §6.7).
 
-This requirement ensures that users can mix and match adapters without behavioral surprises. The conformance test suite includes tests that verify equivalence using a mock adapter that supports both modes.
+**No arbitrary stringification (Normative):**
+
+* Translator shims and compatibility adapters MUST NOT coerce arbitrary objects to `str` for embedding. They MUST embed only actual string inputs (or treat non-strings as invalid/empty per adapter policy), to avoid silently embedding `repr()` output.
+
+### 6.9. Private Kwarg Filtering (MUST)
+
+Adapters that accept `**kwargs` MUST filter out keys starting with `_` (underscore) and MUST NOT propagate them into `framework_ctx` or `OperationContext.attrs`.
+
+```python
+# Filtering logic
+filtered_kwargs = {k: v for k, v in kwargs.items() if not k.startswith('_')}
+# filtered_kwargs can be passed to framework_ctx
+# Underscore-prefixed kwargs may be used internally or snapshotted for debugging
+```
+
+### 6.10. Bounded Context Arrays (SHOULD)
+
+When adapters include large arrays in context (e.g., `node_ids` in LlamaIndex), they SHOULD:
+
+* Truncate the array to a bounded maximum (configurable, e.g., `max_node_ids_in_context`)
+* Include the total count (e.g., `node_count`)
+* Include a truncation indicator (e.g., `node_ids_truncated: bool`)
 
 ---
 
@@ -748,12 +812,13 @@ The AutoGen adapter exposes Corpus embeddings as Chroma-compatible `embedding_fu
 
 ### 7.2. Framework-Specific Challenges
 
-| Challenge | Solution |
-|-----------|----------|
-| Chroma calls sync `__call__` from async event loop | `_allow_chromadb_in_event_loop` flag with thread-pool bridge |
-| Chroma probes adapter class for `name()`, `get_config()` | Static compatibility methods returning stable values |
-| AutoGen batch memory `add()` raises `AttributeError` instead of `TypeError` | `_AutoGenChromaMemoryCompatWrapper` normalizes exception |
-| Context translation must preserve agent/conversation IDs | Extract `agent_name`, `conversation_id`, `workflow_type`, `retriever_name` |
+| Challenge                                                                   | Solution                                                                                   |
+| --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Chroma calls sync `__call__` from async event loop                          | `_allow_chromadb_in_event_loop` flag with thread-pool bridge                               |
+| Chroma probes adapter class for `name()`, `get_config()`                    | Static compatibility methods returning stable values                                       |
+| AutoGen batch memory `add()` raises `AttributeError` instead of `TypeError` | `_AutoGenChromaMemoryCompatWrapper` normalizes exception                                   |
+| Context translation must preserve agent/conversation IDs                    | Extract `agent_name`, `conversation_id`, `workflow_type`, `retriever_name`                 |
+| Invalid context types must not break embedding                              | Ignore with warning, continue embedding                                                    |
 
 ### 7.3. Data Types
 
@@ -826,28 +891,31 @@ def __init__(
 
 #### 7.4.3. Sync/Async Bridge
 
-The adapter uses a module‑level thread pool for Chroma compatibility:
+The adapter uses a module-level thread pool for Chroma compatibility:
 
 ```python
-_CHROMA_BRIDGE_EXECUTOR = ThreadPoolExecutor(max_workers=4)
+# Module-level singleton executor used for AutoGen/Chroma event-loop bridging.
+# Note: ThreadPoolExecutor threads are non-daemon in standard CPython.
+# This executor is intentionally minimal and relies on short-lived tasks.
+_CHROMA_BRIDGE_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="chroma_bridge")
 
 def _run_blocking_in_chroma_bridge_thread(fn: Callable[[], T]) -> T:
     return _CHROMA_BRIDGE_EXECUTOR.submit(fn).result()
 ```
 
-**Thread Pool Lifecycle and Constraints:**  
-- The thread pool is a module‑level singleton shared by all AutoGen adapter instances.  
-- It MUST be created as a **daemon** thread pool (`daemon=True`) so that it does not block interpreter shutdown.  
-- The pool MUST have a bounded work queue with a configurable maximum size (default 1000). If the queue is full, submitting a new task MUST block or raise an exception (implementations MAY use a `Queue` with `maxsize` and a timeout).  
-- On interpreter exit, daemon threads are abruptly terminated; this is acceptable because the pool only runs short‑lived embedding tasks, and abrupt termination will not leak resources (the underlying translator calls are expected to handle cancellation).  
-- No explicit shutdown of the pool is required, but implementations MAY register an `atexit` handler to attempt graceful shutdown (non‑normative).
+**Thread Pool Lifecycle and Constraints:**
 
-**Normative constraints on `_allow_chromadb_in_event_loop`:**  
-- This flag MUST default to `False`.  
-- It MUST only be used to enable Chroma compatibility; it MUST NOT be used to circumvent event loop guards for other operations (e.g., direct calls to `embed_documents`).  
-- When `True`, the adapter's `__call__` method (the Chroma embedding function) MAY run synchronously inside an event loop by delegating to the thread pool.  
-- The adapter MUST still enforce event loop guards for all other sync methods (`embed_documents`, `embed_query`, `close`).  
-- Setting this flag to `True` when Chroma is not in use is NOT RECOMMENDED, as it may hide deadlocks.
+* The thread pool is a module-level singleton shared by all AutoGen adapter instances.
+* The pool is created as `ThreadPoolExecutor(max_workers=4, thread_name_prefix="chroma_bridge")`.
+* No bounded queue or daemon thread guarantees are required; standard Python `ThreadPoolExecutor` behavior applies.
+
+**Normative constraints on `_allow_chromadb_in_event_loop`:**
+
+* This flag MUST default to `False`.
+* When `True`, the adapter's `__call__` method (the Chroma embedding function) MAY run synchronously inside an event loop by delegating to the thread pool.
+* When `True`, the adapter MAY also bridge legacy `embed_query(input=[...])` flows that occur inside an event loop in certain Chroma compatibility paths, by delegating to the thread pool.
+* The adapter MUST still enforce event loop guards for all other sync methods (`embed_documents`, `embed_query` with single text).
+* Setting this flag to `True` when Chroma is not in use is NOT RECOMMENDED, as it may hide deadlocks.
 
 #### 7.4.4. Operations
 
@@ -872,7 +940,14 @@ def embed_documents(self, texts, *, autogen_context=None, model=None):
 @with_embedding_error_context("query")  
 def embed_query(self, text, *, input=None, autogen_context=None, model=None):
     # Handles both single text and legacy batch modes
+    # Note: when called from an event loop via legacy input=[...], bridging may occur
+    # if _allow_chromadb_in_event_loop is enabled, to maintain Chroma compatibility.
+    _ensure_not_in_event_loop("embed_query")  # for single text
 ```
+
+**Empty text behavior (Normative):**
+
+* The AutoGen adapter does not guarantee zero-vector synthesis for empty/whitespace-only strings. It delegates empty-text behavior to the underlying translator/adapter.
 
 ### 7.5. Integration Helpers
 
@@ -919,12 +994,17 @@ class ErrorCodes:
 ### 7.7. AutoGen-Specific Context
 
 The adapter extracts these fields from `autogen_context`:
-- `agent_name` — Current agent identifier
-- `conversation_id` — Active conversation
-- `workflow_type` — Type of agent workflow
-- `retriever_name` — Name of retriever component
+
+* `agent_name` — Current agent identifier
+* `conversation_id` — Active conversation
+* `workflow_type` — Type of agent workflow
+* `retriever_name` — Name of retriever component
 
 Unknown keys are ignored (per §4.4).
+
+**Invalid context type behavior (Normative):**
+
+* If `autogen_context` is not a Mapping, the adapter MUST ignore it and SHOULD log a warning (SIEM-safe). It MUST NOT raise solely due to invalid `autogen_context` type.
 
 ---
 
@@ -936,12 +1016,14 @@ The CrewAI adapter implements the embedder protocol expected by CrewAI agents, e
 
 ### 8.2. Framework-Specific Challenges
 
-| Challenge | Solution |
-|-----------|----------|
-| No shared runtime context across agents | Extract context from per-call `crewai_context` |
-| Agents may be created before embedder is available | `register_with_crewai()` auto-attaches to existing agents |
-| Non-mapping context types must be rejected | Raise `ValueError` for invalid types (test requirement) |
-| Empty batch returns empty list | Early return for empty inputs |
+| Challenge                                                 | Solution                                                         |
+| --------------------------------------------------------- | ---------------------------------------------------------------- |
+| No shared runtime context across agents                   | Extract context from per-call `crewai_context`                   |
+| Agents may be created before embedder is available        | `register_with_crewai()` auto-attaches to existing agents        |
+| Non-mapping context types must be rejected                | Raise `ValueError` for invalid types (test requirement)          |
+| Empty batch returns empty list                            | Early return for empty inputs                                    |
+| Context translation may fail                               | `fallback_to_simple_context` controls fallback behavior          |
+| Operation context propagation can be gated                | `enable_agent_context_propagation` flag                          |
 
 ### 8.3. Data Types
 
@@ -981,7 +1063,10 @@ def __init__(
     framework_version: Optional[str] = None,
 ):
     # Validate corpus_adapter
-    # Normalize crewai_config with defaults
+    # Normalize crewai_config with defaults:
+    #   fallback_to_simple_context: bool (default False)
+    #   enable_agent_context_propagation: bool (default False)
+    #   task_aware_batching: bool (default False)
     # Initialize thread lock and dimension hint
 ```
 
@@ -1022,7 +1107,37 @@ def embed_query(self, text, *, crewai_context=None, model=None, **kwargs):
     core_ctx, framework_ctx = self._build_contexts(...)
     translated = self._translator.embed(raw_texts=text, ...)
     return self._coerce_embedding_vector(translated)
+
+# Optional callable interface (MAY)
+# Some CrewAI integration patterns treat embedders as callables.
+def __call__(self, texts):
+    """Vector-store style callable: __call__(texts)->matrix."""
+    _ensure_not_in_event_loop("__call__")
+    return self.embed_documents(texts)
 ```
+
+**Context build strictness (Normative):**
+
+* If `crewai_context` is not a Mapping, the adapter MUST raise `ValueError` with `[CREWAI_CONTEXT_INVALID]`.
+* This strict validation MUST occur in any call path that attempts to build CrewAI contexts, ensuring consistent fail-fast behavior.
+
+**fallback_to_simple_context behavior (Normative):**
+
+* If context translation fails or returns a non-OperationContext-like object:
+  * When `fallback_to_simple_context=True`, the adapter MUST use an empty `OperationContext()` (best-effort) and continue embedding.
+  * When `fallback_to_simple_context=False`, the adapter MUST proceed without core context (`None`) and continue embedding.
+
+**Operation context propagation gate (Normative):**
+
+* `_operation_context` MUST be included in `framework_ctx` only when `enable_agent_context_propagation=True`.
+
+**Private kwargs filtering (Normative):**
+
+* Additional `**kwargs` MAY be included in `framework_ctx` except keys starting with `_`, which MUST be filtered out.
+
+**Empty text behavior (Normative):**
+
+* The CrewAI adapter does not guarantee zero-vector synthesis for empty/whitespace-only strings. It delegates empty-text behavior to the underlying translator/adapter.
 
 ### 8.5. Integration Helpers
 
@@ -1055,14 +1170,27 @@ def register_with_crewai(
     
     - Creates embedder instance
     - Attempts to attach to all agents in crew.agents
+    - Supports crew.agents being an attribute OR a callable
     - Logs warnings if crew structure is unexpected
+    - Skips agents without embedder attribute
     """
+    if crew is None:
+        raise ValueError("crew must not be None")
+    
     embedder = CorpusCrewAIEmbeddings(...)
     
-    agents = getattr(crew, "agents", [])
-    for agent in agents:
-        if hasattr(agent, "embedder"):
-            agent.embedder = embedder
+    # crew.agents may be an attribute OR a callable that returns agents
+    agents_obj = getattr(crew, "agents", [])
+    agents = agents_obj() if callable(agents_obj) else agents_obj
+    
+    try:
+        for agent in (agents or []):
+            # Skip agents without embedder attribute
+            if hasattr(agent, "embedder"):
+                agent.embedder = embedder
+    except Exception as e:
+        # Best-effort: log and return embedder unattached
+        logger.warning("Unable to attach embedder to crew agents: %s", e)
     
     return embedder
 ```
@@ -1081,14 +1209,22 @@ class ErrorCodes:
 ### 8.7. CrewAI-Specific Context
 
 The adapter extracts:
-- `agent_role` — Role of the current agent
-- `task_id` — Current task identifier
-- `workflow` — Workflow name
-- `agent_id` — Agent instance identifier
-- `crew_id` — Crew identifier
-- `process_id` — Process identifier
+
+* `agent_role` — Role of the current agent
+* `task_id` — Current task identifier
+* `workflow` — Workflow name
+* `agent_id` — Agent instance identifier
+* `crew_id` — Crew identifier
+* `process_id` — Process identifier
 
 When `task_aware_batching=True`, batch strategies include task ID in framework context. Unknown keys are ignored.
+
+**Propagation and fallback summary (Normative):**
+
+* Invalid `crewai_context` type MUST raise `ValueError [CREWAI_CONTEXT_INVALID]`.
+* `fallback_to_simple_context` controls whether translation failures produce `OperationContext()` (True) or no core context (False).
+* `_operation_context` is included in `framework_ctx` only when `enable_agent_context_propagation=True`.
+* `_`-prefixed kwargs are filtered and MUST NOT propagate.
 
 ---
 
@@ -1100,13 +1236,19 @@ The LangChain adapter implements `langchain_core.embeddings.Embeddings` with com
 
 ### 9.2. Framework-Specific Challenges
 
-| Challenge | Solution |
-|-----------|----------|
-| Sync methods called from async event loops | Detect event loop and run in worker thread |
-| Pydantic v2 rejects undeclared attributes | Use `PrivateAttr` and `model_config["extra"] = "allow"` |
-| Empty string queries must return zero vectors | Dimension-aware empty handling |
-| Unknown config keys must be rejected | Strict validation in `langchain_config` |
-| LangChain may not be installed | Lazy imports with fallback stubs |
+| Challenge                                         | Solution                                                       |
+| ------------------------------------------------- | -------------------------------------------------------------- |
+| Sync methods called from async event loops        | Detect event loop and run in worker thread                     |
+| Pydantic v2 rejects undeclared attributes         | Use `PrivateAttr` and `model_config["extra"] = "allow"`        |
+| Empty string queries must return zero vectors     | Dimension-aware empty handling (query-only guarantee)          |
+| Unknown adapter-level config keys must be rejected| Strict validation in adapter-level `langchain_config`          |
+| Unknown per-call config keys are permissive       | Non-fatal, best-effort extraction                              |
+| LangChain may not be installed                     | Lazy imports with fallback stubs                               |
+
+**Optional dependency behavior (Normative):**
+
+* The adapter MAY be constructed even when LangChain is not installed by providing a minimal stub for the Embeddings base type.
+* When LangChain is missing, integration behavior is limited and SHOULD emit a warning, but construction MUST NOT fail solely due to missing optional dependencies.
 
 ### 9.3. Data Types
 
@@ -1155,7 +1297,7 @@ def validate_corpus_adapter(cls, v):
 
 @field_validator("langchain_config", mode="before")
 def validate_langchain_config(cls, v):
-    # Reject unknown keys
+    # Adapter-level config is strict: reject unknown keys
     allowed = {"fallback_to_simple_context", "enable_operation_context_propagation"}
     unknown = set(dict(v).keys()) - allowed
     if unknown:
@@ -1166,6 +1308,12 @@ def validate_langchain_config(cls, v):
         "enable_operation_context_propagation": bool(v.get("enable_operation_context_propagation", True)),
     }
 ```
+
+**Per-call config structure validation (Normative):**
+
+* Per-call `config` (RunnableConfig-like) SHOULD be treated as best-effort and non-fatal:
+  * Non-mapping or malformed config objects SHOULD trigger warnings and fallbacks, not exceptions.
+  * Adapter-level `langchain_config` remains strict and MUST reject unknown keys.
 
 #### 9.4.3. Event Loop Safety
 
@@ -1184,8 +1332,14 @@ def embed_documents(self, texts, *, config=None, model=None, **kwargs):
         _ensure_not_in_event_loop("embed_documents")
         return _do_call()
     except Exception:
+        # When invoked from an event loop, this adapter bridges for LangChain compatibility
         return _run_in_worker_thread(_do_call)
 ```
+
+**Normative bridging rule (LangChain-specific):**
+
+* LangChain adapter sync methods MAY transparently execute via worker thread when called inside an active event loop, to preserve compatibility with LangChain runtime/test behavior.
+* Bridging MUST ensure no work runs on the event loop thread and MUST avoid nested event loops.
 
 #### 9.4.4. Operations
 
@@ -1196,7 +1350,7 @@ def embed_documents(self, texts, *, config=None, model=None, **kwargs):
 
 @with_embedding_error_context("query")
 def embed_query(self, text, *, config=None, model=None, **kwargs):
-    # Empty string handling with dimension probe
+    # Empty string handling with dimension probe (query-only guarantee)
 
 @with_async_embedding_error_context("documents")
 async def aembed_documents(self, texts, *, config=None, model=None, **kwargs):
@@ -1206,6 +1360,17 @@ async def aembed_documents(self, texts, *, config=None, model=None, **kwargs):
 async def aembed_query(self, text, *, config=None, model=None, **kwargs):
     # Async implementation with empty string handling
 ```
+
+**Empty text handling scope (Normative):**
+
+* For LangChain, empty-string zero-vector handling MUST be implemented for `embed_query("")` and `aembed_query("")`.
+* Batch methods (`embed_documents` / `aembed_documents`) MAY delegate empty-string behavior to the underlying layer unless explicitly implemented.
+
+**Capabilities/health passthrough preference (Normative):**
+
+* `capabilities()` and `health()` SHOULD prefer calling methods on the underlying `corpus_adapter` when available.
+* If the underlying result is not a Mapping, the adapter MUST normalize it into a Mapping (e.g., `{"value": result}`) before returning or attaching context.
+* If the underlying method returns a coroutine, the adapter MAY execute it using a safe strategy consistent with event loop rules (e.g., `asyncio.run()` when not in an event loop, or an async path).
 
 ### 9.5. Integration Helpers
 
@@ -1243,13 +1408,18 @@ class ErrorCodes:
 ### 9.7. LangChain-Specific Context
 
 The adapter extracts from `config`:
-- `run_id` — LangChain run identifier
-- `run_name` — Run name
-- `tags` — Snapshotted for observability
-- `metadata` — Snapshotted for observability
-- `configurable` — Snapshotted for observability
+
+* `run_id` — LangChain run identifier
+* `run_name` — Run name
+* `tags` — Snapshotted for observability (`tags_snapshot`)
+* `metadata` — Snapshotted for observability (`metadata_snapshot`)
+* `configurable` — Snapshotted for observability (`configurable_snapshot`)
 
 Unknown keys are ignored.
+
+**Private kwargs filtering (Normative):**
+
+* Keys prefixed with `_` MUST NOT be propagated into `framework_ctx`.
 
 ---
 
@@ -1261,13 +1431,15 @@ The LlamaIndex adapter implements `llama_index.core.embeddings.BaseEmbedding` wi
 
 ### 10.2. Framework-Specific Challenges
 
-| Challenge | Solution |
-|-----------|----------|
-| Pydantic `__setattr__` fails before `__pydantic_extra__` exists | Call `super().__init__` first, then `object.__setattr__` |
-| LlamaIndex may pass non-Mapping context | Defensive filtering with warnings |
-| Adapters may implement simple `embed(texts)` without EmbedSpec | `_TranslatorAdapterShim` adapts signatures (see §6.8) |
-| Batch operations must handle non-string items with row alignment | `strict_text_types=False` inserts zero vectors |
-| Global `Settings.embed_model` registration may fail | Best-effort registration with graceful fallback |
+| Challenge                                                                   | Solution                                                        |
+| --------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| Pydantic `__setattr__` fails before `__pydantic_extra__` exists             | Call `super().__init__` first, then `object.__setattr__`        |
+| LlamaIndex may pass non-Mapping context                                     | Defensive filtering with warnings (ignore, don't raise)         |
+| Adapters may implement simple `embed(texts)` without EmbedSpec              | `_TranslatorAdapterShim` adapts signatures (see §6.8)           |
+| Batch operations must handle non-string items with row alignment            | `strict_text_types=False` inserts zero vectors                  |
+| Global `Settings.embed_model` registration may fail                         | Best-effort registration with graceful fallback                 |
+| Unknown adapter-level config keys must be rejected                          | Strict validation in `llamaindex_config`                        |
+| Large node_id arrays must be bounded                                        | Truncate with count + truncated flag                            |
 
 ### 10.3. Data Types
 
@@ -1317,7 +1489,7 @@ def __init__(
     
     # 3. Use object.__setattr__ to attach runtime state
     object.__setattr__(self, "corpus_adapter", corpus_adapter)
-    object.__setattr__(self, "_translator_adapter", _TranslatorAdapterShim(corpus_adapter))  # see §6.8
+    object.__setattr__(self, "_translator_adapter", _TranslatorAdapterShim(corpus_adapter))
     object.__setattr__(self, "batch_config", batch_config)
     object.__setattr__(self, "text_normalization_config", text_normalization_config)
     object.__setattr__(self, "llamaindex_config", normalized_config)
@@ -1327,12 +1499,12 @@ def __init__(
 
 #### 10.4.2. Translator Shim Pattern
 
-The `_TranslatorAdapterShim` ensures equivalence as defined in §6.8.
+The `_TranslatorAdapterShim` ensures equivalence as defined in §6.8 and MUST NOT stringify arbitrary objects to `str`.
 
 #### 10.4.3. Initialization Validation
 
 ```python
-# Enforce known embedding dimension
+# Enforce known embedding dimension for zero-vector guarantees
 if (not hasattr(corpus_adapter, "get_embedding_dimension")) and (embedding_dimension is None):
     raise ValueError(
         "Embedding dimension unknown. Implement get_embedding_dimension() "
@@ -1372,8 +1544,9 @@ def _embed_text_batch(self, texts, llamaindex_context):
     if empty_indices:
         result = []
         non_empty_idx = 0
+        empty_set = set(empty_indices)
         for i in range(len(texts_list)):
-            if i in set(empty_indices):
+            if i in empty_set:
                 result.append([0.0] * self.embedding_dimension)
             else:
                 result.append(embeddings[non_empty_idx])
@@ -1382,6 +1555,12 @@ def _embed_text_batch(self, texts, llamaindex_context):
     
     return embeddings
 ```
+
+**Strict vs lenient semantics (Normative):**
+
+* Batch embedding MUST preserve row alignment (output rows correspond 1:1 to input items by index).
+* When `strict_text_types=True`, non-string inputs MUST raise `TypeError`.
+* When `strict_text_types=False`, non-string inputs and empty/whitespace strings MUST be treated as empty and MUST receive zero-vector rows of the correct known dimension, preserving row alignment.
 
 ### 10.5. Integration Helpers
 
@@ -1433,14 +1612,26 @@ class ErrorCodes:
 ### 10.7. LlamaIndex-Specific Context
 
 The adapter extracts:
-- `node_ids` — IDs of nodes being embedded (bounded to `max_node_ids_in_context`)
-- `node_count` — Total number of nodes
-- `index_id` — Index identifier
-- `trace_id` — Tracing identifier
-- `workflow` — Workflow name
-- `has_callback_manager` — Boolean flag
+
+* `node_ids` — IDs of nodes being embedded (bounded to `max_node_ids_in_context`)
+* `node_count` — Total number of nodes
+* `node_ids_truncated` — Boolean truncation flag
+* `index_id` — Index identifier
+* `trace_id` — Tracing identifier
+* `workflow` — Workflow name
+* `has_callback_manager` — Boolean flag
 
 Unknown keys are ignored.
+
+**Bounded context arrays (Normative):**
+
+* Large arrays included in context (e.g., `node_ids`) MUST be truncated to a bounded maximum and MUST include:
+  * the total count (`node_count`)
+  * a truncation indicator (`node_ids_truncated`)
+
+**Invalid context type behavior (Normative):**
+
+* If the llamaindex context is not a Mapping, the adapter MUST ignore it and SHOULD log a warning (SIEM-safe). It MUST NOT raise solely due to invalid context type.
 
 ---
 
@@ -1452,13 +1643,19 @@ The Semantic Kernel adapter implements `semantic_kernel.connectors.ai.embeddings
 
 ### 11.2. Framework-Specific Challenges
 
-| Challenge | Solution |
-|-----------|----------|
-| Pydantic base class rejects undeclared attributes | `object.__setattr__` after `super().__init__` |
-| Simple adapters choke on EmbedSpec objects | Detect plain-text mode, use `_DirectEmbeddingTranslator` (ensuring equivalence per §6.8) |
-| Tests call sync aliases from async contexts | `_run_coroutine_in_new_thread()` bridge |
-| Multiple registration APIs across versions | Try `add_service`, fall back to `register_embedding_generation` |
-| `ai_model_id` and `service_id` required in modern SK | Pass through with defaults |
+| Challenge                                                       | Solution                                                                                         |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Pydantic base class rejects undeclared attributes               | `object.__setattr__` after `super().__init__`                                                    |
+| Simple adapters choke on EmbedSpec objects                      | Detect plain-text mode, use `_DirectEmbeddingTranslator` (ensuring equivalence per §6.8)         |
+| Tests call sync aliases from async contexts                     | `_run_coroutine_in_new_thread()` bridge for convenience aliases, hard-refuse for core sync methods|
+| Multiple registration APIs across versions                      | Try `add_service`, fall back to `register_embedding_generation`                                   |
+| `ai_model_id` and `service_id` required in modern SK            | Pass through with defaults                                                                       |
+| Unknown adapter-level config keys must be rejected              | Strict validation in `sk_config`                                                                  |
+| Dimension enforcement via truncation/padding optional           | `embedding_dimension` override may enforce fixed output size                                     |
+
+**Backward-compat import stability (Normative):**
+
+* When upstream framework modules move, the adapter MAY use safe import aliasing (e.g., `sys.modules.setdefault(...)`) to preserve `isinstance()` checks and older call sites. Such aliasing MUST be minimal and MUST NOT introduce unsafe side effects.
 
 ### 11.3. Data Types
 
@@ -1504,8 +1701,13 @@ def _adapter_prefers_direct_text_mode(adapter: Any) -> bool:
         return False
 ```
 
-**Detection Failure Fallback:**  
+**Detection Failure Fallback:**
 If detection fails (e.g., due to `*args`, compiled extensions, or wrapped functions), the adapter MUST assume the underlying adapter expects the full EmbedSpec interface. Implementations MAY provide an explicit configuration flag (e.g., `force_direct_mode`) to override the heuristic when needed.
+
+**Direct/plain-text adapter mode context forwarding (Normative):**
+
+* In direct/plain-text mode, the adapter MAY invoke the underlying adapter as `embed(texts, ctx=..., model=...)` without forwarding `framework_ctx`, because many simple adapters do not accept it.
+* If the adapter supports `framework_ctx`, it MAY attempt to pass it first and fall back, but such probing behavior is implementation-defined.
 
 #### 11.4.2. Initialization
 
@@ -1546,6 +1748,15 @@ def __init__(
                        _adapter_prefers_direct_text_mode(corpus_adapter))
 ```
 
+**Strict adapter-level config validation (Normative):**
+
+* `sk_config` normalization MUST reject unknown keys and MUST raise `ValueError` with `[SEMANTIC_KERNEL_CONFIG_INVALID]` on invalid configuration to prevent silent misconfiguration.
+
+**Dimension enforcement (Normative):**
+
+* If an explicit `embedding_dimension` override is set, the adapter MAY enforce that dimension by padding or truncation of returned vectors/matrices to guarantee downstream consistency.
+* If enforcement is enabled, it MUST NOT introduce NaN/Inf and MUST be SIEM-safe (no logging of raw vectors).
+
 #### 11.4.3. Sync Alias Bridging
 
 ```python
@@ -1577,6 +1788,14 @@ def embed_documents(self, texts, *, sk_context=None, **kwargs):
         )
     return self.generate_embeddings(texts, sk_context=sk_context, **kwargs)
 ```
+
+**Normative bridging rule (Semantic Kernel-specific):**
+
+* Core sync SK methods (e.g., `generate_embeddings`, `generate_embedding`, `capabilities`, `health`, `close` if implemented) MUST hard-refuse execution on the event loop thread.
+* Convenience sync aliases (e.g., `embed_documents`, `embed_query`) MAY bridge by executing the async variant in a dedicated worker thread, provided:
+  * no embedding work runs on the event loop thread
+  * the adapter avoids nested event loops
+  * special refusal cases (e.g., trivial batches) remain allowed for compatibility tests.
 
 #### 11.4.4. Operations
 
@@ -1612,6 +1831,15 @@ async def generate_embedding_async(self, text, *, sk_context=None, **__):
     
     return await self._aembed_single_text(text, sk_context=sk_context)
 ```
+
+**Empty/whitespace handling (Normative):**
+
+* Semantic Kernel adapter MUST treat empty or whitespace-only strings as empty and MUST return zero vectors of the correct known dimension.
+
+**Lenient batch semantics (Normative when `strict_text_types=False`):**
+
+* Non-string items MUST be treated as empty and MUST receive zero-vector rows.
+* Row alignment MUST be preserved.
 
 ### 11.5. Integration Helpers
 
@@ -1696,13 +1924,14 @@ class ErrorCodes:
 ### 11.7. Semantic Kernel-Specific Context
 
 The adapter extracts:
-- `plugin_name` — Name of the calling plugin
-- `function_name` — Name of the calling function
-- `kernel_id` — Kernel identifier
-- `memory_type` — Type of memory operation
-- `request_id` — Request identifier
-- `user_id` — User identifier
-- `execution_settings` — Snapshotted for observability
+
+* `plugin_name` — Name of the calling plugin
+* `function_name` — Name of the calling function
+* `kernel_id` — Kernel identifier
+* `memory_type` — Type of memory operation
+* `request_id` — Request identifier
+* `user_id` — User identifier
+* `execution_settings` — Snapshotted for observability
 
 Unknown keys are ignored.
 
@@ -1712,31 +1941,33 @@ Unknown keys are ignored.
 
 ### 12.1. Error Code Mapping Table (Normative)
 
-| Corpus Error Code | Framework Adapter Mapping | Retryable |
-|-------------------|--------------------------|-----------|
-| `INVALID_EMBEDDING_RESULT` | Raise `TypeError` or framework equivalent | No |
-| `EMPTY_EMBEDDING_RESULT` | Raise `ValueError` with context | No |
-| `EMBEDDING_CONVERSION_ERROR` | Raise `TypeError` with details | No |
-| `TEXT_TOO_LONG` | Framework-specific (e.g., `BadRequest` in LangChain) | No |
-| `MODEL_NOT_AVAILABLE` | `NotSupported` or `Unavailable` | Conditional |
-| `DEADLINE_EXCEEDED` | Propagate with budget exhausted message | Conditional |
-| `RESOURCE_EXHAUSTED` | Framework rate-limit exception with `retry_after_ms` | Yes |
-| `TRANSIENT_NETWORK` | Framework network error | Yes |
+| Corpus Error Code             | Framework Adapter Mapping                           | Retryable   |
+| ----------------------------- | --------------------------------------------------- | ----------- |
+| `INVALID_EMBEDDING_RESULT`    | Raise `TypeError` or framework equivalent           | No          |
+| `EMPTY_EMBEDDING_RESULT`      | Raise `ValueError` with context                     | No          |
+| `EMBEDDING_CONVERSION_ERROR`  | Raise `TypeError` with details                      | No          |
+| `TEXT_TOO_LONG`               | Framework-specific (e.g., `BadRequest` in LangChain)| No          |
+| `MODEL_NOT_AVAILABLE`         | `NotSupported` or `Unavailable`                     | Conditional |
+| `DEADLINE_EXCEEDED`           | Propagate with budget exhausted message             | Conditional |
+| `RESOURCE_EXHAUSTED`          | Framework rate-limit exception with `retry_after_ms`| Yes         |
+| `TRANSIENT_NETWORK`           | Framework network error                             | Yes         |
 
 ### 12.2. Retry Semantics
 
 Adapters MUST NOT retry automatically unless configured to do so. When retrying:
-- Honor `retry_after_ms` if present
-- Use exponential backoff with jitter
-- Do not retry `BadRequest` or validation errors
-- Consider per-tenant retry budgets
+
+* Honor `retry_after_ms` if present
+* Use exponential backoff with jitter
+* Do not retry `BadRequest` or validation errors
+* Consider per-tenant retry budgets
 
 ### 12.3. Circuit Breaking Guidance
 
 Implementations MAY implement circuit breakers:
-- Open on repeated `Unavailable` or `ResourceExhausted`
-- Half-open after configured timeout
-- Per-tenant, per-operation circuits RECOMMENDED
+
+* Open on repeated `Unavailable` or `ResourceExhausted`
+* Half-open after configured timeout
+* Per-tenant, per-operation circuits RECOMMENDED
 
 ---
 
@@ -1774,10 +2005,10 @@ embedding_batch_size{framework,operation}  # histogram
 
 ### 13.3. Distributed Tracing (SHOULD)
 
-- Propagate `traceparent` from operation context
-- Create spans for each embedding operation
-- Include attributes: `framework`, `operation`, `model`, `batch_size`, `tenant_hash`
-- Final span status matches operation outcome
+* Propagate `traceparent` from operation context
+* Create spans for each embedding operation
+* Include attributes: `framework`, `operation`, `model`, `batch_size`, `tenant_hash`
+* Final span status matches operation outcome
 
 ---
 
@@ -1785,20 +2016,20 @@ embedding_batch_size{framework,operation}  # histogram
 
 ### 14.1. Tenant Isolation (MUST)
 
-- `tenant` in operation context MUST be used for isolation
-- Never log raw tenant identifiers; use `tenant_hash`
-- Caches MUST key by `tenant_hash` when `cache_scope="tenant"`
+* `tenant` in operation context MUST be used for isolation
+* Never log raw tenant identifiers; use `tenant_hash`
+* Caches MUST key by `tenant_hash` when `cache_scope="tenant"`
 
 ### 14.2. Credential Handling (MUST)
 
-- Credentials for underlying adapters provisioned out-of-band
-- Never log, snapshot, or expose credentials in error context
+* Credentials for underlying adapters provisioned out-of-band
+* Never log, snapshot, or expose credentials in error context
 
 ### 14.3. Log Redaction (MUST)
 
-- All logs use `_safe_snapshot()` for object serialization
-- Strings >64 bytes replaced with hash + length
-- No raw text, vectors, or prompts in logs
+* All logs use `_safe_snapshot()` for object serialization
+* Strings >64 bytes replaced with hash + length
+* No raw text, vectors, or prompts in logs
 
 ---
 
@@ -1806,25 +2037,25 @@ embedding_batch_size{framework,operation}  # histogram
 
 ### 15.1. Latency Targets (Indicative)
 
-| Operation Type | Typical Range | Notes |
-|----------------|---------------|-------|
-| Single embedding | 5–50 ms | Model and provider dependent |
-| Batch embedding (100 texts) | 50–500 ms | Includes batching overhead |
-| Token counting | 1–5 ms | Local operation |
-| Capabilities/Health | 1–10 ms | Cached where possible |
+| Operation Type              | Typical Range | Notes                           |
+| --------------------------- | ------------- | ------------------------------- |
+| Single embedding            | 5–50 ms       | Model and provider dependent    |
+| Batch embedding (100 texts) | 50–500 ms     | Includes batching overhead      |
+| Token counting              | 1–5 ms        | Local operation                 |
+| Capabilities/Health         | 1–10 ms       | Cached where possible           |
 
 ### 15.2. Concurrency Considerations
 
-- All adapters are thread-safe for concurrent use
-- Translator initialized lazily with locks
-- Resource cleanup safe under concurrent access
+* All adapters are thread-safe for concurrent use
+* Translator initialized lazily with locks
+* Resource cleanup safe under concurrent access
 
 ### 15.3. Caching Strategies
 
-- Embedding results cacheable by `(model, normalize, sha256(text))`
-- Cache keys MUST include `tenant_hash`
-- Respect `cache_scope` and `cache_tags` when provided
-- Never cache across tenant boundaries
+* Embedding results cacheable by `(model, normalize, sha256(text))`
+* Cache keys MUST include `tenant_hash`
+* Respect `cache_scope` and `cache_tags` when provided
+* Never cache across tenant boundaries
 
 ---
 
@@ -1837,45 +2068,47 @@ embedding_batch_size{framework,operation}  # histogram
 3. Add error context decorators
 4. Implement core embedding methods
 5. Add context extraction and building
-6. Implement resource management (including lifecycle state)
+6. Implement resource management
 7. Add integration helpers
 8. Write conformance tests
 
 ### 16.2. Validation Requirements (MUST)
 
-- Reject non-string inputs when `strict_text_types=True`
-- Validate corpus_adapter has `embed` method
-- Validate batch_config and text_normalization_config types
-- Reject unknown config keys
-- Enforce positive `embed_batch_size` and maximum batch size (§4.10)
+* Reject non-string inputs when `strict_text_types=True` (when adapter exposes strictness)
+* Validate corpus_adapter has `embed` method
+* Validate batch_config and text_normalization_config types
+* Reject unknown adapter-level config keys
+* Enforce positive `embed_batch_size`
+* Adapters MUST warn on extreme batches (≥1000 items)
 
 ### 16.3. Testing
 
 #### 16.3.1. Conformance Test Suite
 
 Each adapter MUST pass:
-- Wire format validation
-- Error normalization tests
-- Coercion failure conditions (shape mismatch, non-float, NaN/Inf, dimension mismatch) — see §4.5
-- Batch operation tests (including empty batches, large batches)
-- Empty text handling
-- Event loop guard tests
-- Resource cleanup tests (including lifecycle state transitions)
+
+* Wire format validation (as defined by SCHEMA.md where applicable)
+* Error normalization tests
+* Coercion failure conditions (shape mismatch, non-float, NaN/Inf, dimension mismatch) — see §4.5
+* Batch operation tests (including empty batches, large batches)
+* Empty text handling (per adapter guarantees; see §4.11 and framework sections)
+* Event loop guard tests (including bridging behavior where specified)
+* Resource cleanup tests (idempotency and thread safety)
 
 #### 16.3.2. Framework-Specific Tests
 
-- AutoGen: Chroma compatibility, exception normalization, `_allow_chromadb_in_event_loop` constraints
-- CrewAI: Context extraction, crew registration
-- LangChain: Pydantic validation, worker thread fallback
-- LlamaIndex: Pydantic init order, strict/lenient modes, translator shim equivalence (§6.8)
-- Semantic Kernel: Direct translator detection, registration paths, shim equivalence
+* **AutoGen:** Chroma compatibility, exception normalization, `_allow_chromadb_in_event_loop` constraints (including legacy `embed_query(input=[...])` bridging scope)
+* **CrewAI:** Context extraction, crew registration (agents attr/callable), strict invalid context behavior, fallback flags
+* **LangChain:** Pydantic validation, worker thread fallback, strict adapter-level config vs permissive per-call config, query empty handling
+* **LlamaIndex:** Pydantic init order, strict/lenient modes, translator shim equivalence (§6.8), bounded context arrays, dimension requirement
+* **Semantic Kernel:** Direct translator detection, registration paths, shim equivalence, sync alias bridging, canonical operation labels, dimension enforcement
 
 #### 16.3.3. Cross-Adapter Tests
 
-- All adapters produce identical embeddings for same input (within tolerance, see §6.7)
-- Error codes consistent across frameworks
-- Observability fields follow same patterns
-- Lifecycle behavior (close, use after close) consistent
+* All adapters produce identical embeddings for same input (within tolerance, see §6.7)
+* Error codes consistent across frameworks
+* Observability fields follow same patterns
+* Cleanup idempotency and thread safety consistent
 
 ---
 
@@ -1884,25 +2117,26 @@ Each adapter MUST pass:
 ### 17.1. Semantic Versioning (MUST)
 
 Adapter packages MUST use Semantic Versioning:
-- MAJOR: Breaking changes to public API
-- MINOR: Additive, backward-compatible features
-- PATCH: Bug fixes and internal improvements
+
+* MAJOR: Breaking changes to public API
+* MINOR: Additive, backward-compatible features
+* PATCH: Bug fixes and internal improvements
 
 ### 17.2. Framework Version Compatibility
 
-Adapters SHOULD document supported framework versions. "Tested" means that the adapter has passed the conformance test suite (as defined in §16.3) against those specific framework versions. The adapter MAY work with other versions but compatibility is not guaranteed.
+Adapters SHOULD document supported framework versions. "Tested" means that the adapter has passed the conformance test suite against those specific framework versions. The adapter MAY work with other versions but compatibility is not guaranteed.
 
-- AutoGen: ≥0.4.0 (tested)
-- CrewAI: ≥0.30.0 (tested)
-- LangChain: ≥0.1.0, ≤0.3.x (tested)
-- LlamaIndex: ≥0.10.0 (tested)
-- Semantic Kernel: ≥1.0.0 (tested)
+* AutoGen: ≥0.4.0 (tested)
+* CrewAI: ≥0.30.0 (tested)
+* LangChain: ≥0.1.0, ≤0.3.x (tested)
+* LlamaIndex: ≥0.10.0 (tested)
+* Semantic Kernel: ≥1.0.0 (tested)
 
 ### 17.3. Deprecation Policy
 
-- Deprecated features documented for one minor version
-- Removal only in MAJOR version bump
-- Migration guides provided for breaking changes
+* Deprecated features documented for one minor version
+* Removal only in MAJOR version bump
+* Migration guides provided for breaking changes
 
 ---
 
@@ -1910,30 +2144,34 @@ Adapters SHOULD document supported framework versions. "Tested" means that the a
 
 ### 18.1. Normative References
 
-- [RFC2119] Bradner, S., "Key words for use in RFCs to Indicate Requirement Levels", BCP 14, RFC 2119, March 1997.
-- [RFC8174] Leiba, B., "Ambiguity of Uppercase vs Lowercase in RFC 2119 Key Words", BCP 14, RFC 8174, May 2017.
-- Corpus Embedding Protocol V1.0 Specification
-- Corpus Common Foundation Specification
+* [RFC2119] Bradner, S., "Key words for use in RFCs to Indicate Requirement Levels", BCP 14, RFC 2119, March 1997.
+* [RFC8174] Leiba, B., "Ambiguity of Uppercase vs Lowercase in RFC 2119 Key Words", BCP 14, RFC 8174, May 2017.
+* Corpus Embedding Protocol V1.0 Specification
+* Corpus Common Foundation Specification
+* SCHEMA.md (wire envelopes and JSON shapes)
+* PROTOCOLS.md (operational semantics)
+* ERRORS.md (canonical taxonomy and retry guidance)
+* METRICS.md (metrics taxonomy and label rules)
 
 ### 18.2. Informative References
 
-- AutoGen Documentation: https://microsoft.github.io/autogen/
-- CrewAI Documentation: https://docs.crewai.com/
-- LangChain Documentation: https://python.langchain.com/
-- LlamaIndex Documentation: https://docs.llamaindex.ai/
-- Semantic Kernel Documentation: https://learn.microsoft.com/en-us/semantic-kernel/
+* AutoGen Documentation: [https://microsoft.github.io/autogen/](https://microsoft.github.io/autogen/)
+* CrewAI Documentation: [https://docs.crewai.com/](https://docs.crewai.com/)
+* LangChain Documentation: [https://python.langchain.com/](https://python.langchain.com/)
+* LlamaIndex Documentation: [https://docs.llamaindex.ai/](https://docs.llamaindex.ai/)
+* Semantic Kernel Documentation: [https://learn.microsoft.com/en-us/semantic-kernel/](https://learn.microsoft.com/en-us/semantic-kernel/)
 
 ---
 
 ## Appendix A — Comparison Matrix: Framework-Specific Challenges
 
-| Framework | Primary Challenge | Adapter Solution |
-|-----------|------------------|------------------|
-| AutoGen | Chroma sync callback in async loop | Thread-pool bridge with opt-in flag |
-| CrewAI | No shared runtime context | Per-call context extraction |
-| LangChain | Sync methods called from async | Event loop detection + worker thread |
-| LlamaIndex | Pydantic init order | `super().__init__` first + `object.__setattr__` |
-| Semantic Kernel | Pydantic + multiple registration paths | Direct translator detection + fallback registration |
+| Framework       | Primary Challenge                     | Adapter Solution                                   |
+| --------------- | ------------------------------------- | -------------------------------------------------- |
+| AutoGen         | Chroma sync callback in async loop    | Thread-pool bridge with opt-in flag                |
+| CrewAI          | No shared runtime context             | Per-call context extraction + strict validation    |
+| LangChain       | Sync methods called from async        | Event loop detection + worker thread fallback      |
+| LlamaIndex      | Pydantic init order                   | `super().__init__` first + `object.__setattr__`    |
+| Semantic Kernel | Pydantic + multiple registration paths| Direct translator detection + fallback registration|
 
 ---
 
@@ -1960,7 +2198,7 @@ def __init__(self, ...):
 ### B.2. Event Loop Safety Patterns
 
 ```python
-# Guard pattern
+# Guard pattern (hard refuse)
 _ensure_not_in_event_loop("sync_method")
 
 # Bridge pattern (controlled)
@@ -1978,13 +2216,11 @@ except Exception:
 
 ```python
 # Sync cleanup
-def close(self):
-    _ensure_not_in_event_loop("close")
-    _maybe_close_sync(self._resource)
+def __exit__(self, exc_type, exc, tb):
+    self._cleanup_sync()
 
-# Async cleanup
-async def aclose(self):
-    await _maybe_close_async(self._resource)
+async def __aexit__(self, exc_type, exc, tb):
+    await self._cleanup_async()
 ```
 
 ### B.4. Context Extraction Patterns
@@ -2107,33 +2343,33 @@ result = await kernel.run_async(
 
 ## Appendix D — Error Code Reference
 
-| Code | Description | Frameworks |
-|------|-------------|------------|
-| `INVALID_EMBEDDING_RESULT` | Embedding result not a list of floats | All |
-| `EMPTY_EMBEDDING_RESULT` | Embedding result empty when non-empty expected | All |
-| `EMBEDDING_CONVERSION_ERROR` | Failed to convert result to expected type | All |
-| `AUTOGEN_CONTEXT_INVALID` | Invalid AutoGen context structure | AutoGen |
-| `CREWAI_CONTEXT_INVALID` | Invalid CrewAI context structure | CrewAI |
-| `LANGCHAIN_CONFIG_INVALID` | Invalid LangChain adapter config | LangChain |
-| `LLAMAINDEX_CONTEXT_INVALID` | Invalid LlamaIndex context | LlamaIndex |
-| `LLAMAINDEX_CONFIG_INVALID` | Invalid LlamaIndex adapter config | LlamaIndex |
-| `SEMANTIC_KERNEL_CONTEXT_INVALID` | Invalid Semantic Kernel context | Semantic Kernel |
-| `SEMANTIC_KERNEL_CONFIG_INVALID` | Invalid Semantic Kernel adapter config | Semantic Kernel |
-| `SYNC_WRAPPER_CALLED_IN_EVENT_LOOP` | Sync method called from async context | All |
+| Code                                | Description                                       | Frameworks      |
+| ----------------------------------- | ------------------------------------------------- | --------------- |
+| `INVALID_EMBEDDING_RESULT`          | Embedding result not a list of floats             | All             |
+| `EMPTY_EMBEDDING_RESULT`            | Embedding result empty when non-empty expected    | All             |
+| `EMBEDDING_CONVERSION_ERROR`        | Failed to convert result to expected type         | All             |
+| `AUTOGEN_CONTEXT_INVALID`           | Invalid AutoGen context structure                 | AutoGen         |
+| `CREWAI_CONTEXT_INVALID`            | Invalid CrewAI context structure                  | CrewAI          |
+| `LANGCHAIN_CONFIG_INVALID`          | Invalid LangChain adapter config                  | LangChain       |
+| `LLAMAINDEX_CONTEXT_INVALID`        | Invalid LlamaIndex context                        | LlamaIndex      |
+| `LLAMAINDEX_CONFIG_INVALID`         | Invalid LlamaIndex adapter config                 | LlamaIndex      |
+| `SEMANTIC_KERNEL_CONTEXT_INVALID`   | Invalid Semantic Kernel context                   | Semantic Kernel |
+| `SEMANTIC_KERNEL_CONFIG_INVALID`    | Invalid Semantic Kernel adapter config            | Semantic Kernel |
+| `SYNC_WRAPPER_CALLED_IN_EVENT_LOOP` | Sync method called from async context             | All             |
 
 ---
 
 ## Appendix E — Implementation Status (Non-Normative)
 
-| Adapter | Status | Conformance | Framework Versions |
-|---------|--------|-------------|-------------------|
-| AutoGen | Stable | 100% | ≥0.4.0 |
-| CrewAI | Stable | 100% | ≥0.30.0 |
-| LangChain | Stable | 100% | 0.1.x, 0.2.x, 0.3.x |
-| LlamaIndex | Stable | 100% | ≥0.10.0 |
-| Semantic Kernel | Stable | 100% | ≥1.0.0 |
+| Adapter         | Status | Conformance | Framework Versions   |
+| --------------- | ------ | ----------- | -------------------- |
+| AutoGen         | Stable | 100%        | ≥0.4.0               |
+| CrewAI          | Stable | 100%        | ≥0.30.0              |
+| LangChain       | Stable | 100%        | 0.1.x, 0.2.x, 0.3.x  |
+| LlamaIndex      | Stable | 100%        | ≥0.10.0              |
+| Semantic Kernel | Stable | 100%        | ≥1.0.0               |
 
-**Note:** This appendix is non‑normative and provided for informational purposes only. The authoritative conformance status is determined by the conformance test suite (§16.3) and the implementation’s own documentation. This table may not be up‑to‑date; refer to the latest release notes for current status.
+**Note:** This appendix is non-normative and provided for informational purposes only. The authoritative conformance status is determined by the conformance test suite (§16.3) and the implementation's own documentation. This table may not be up-to-date; refer to the latest release notes for current status.
 
 ---
 
@@ -2177,3 +2413,5 @@ class MyEmbeddings(BaseEmbedding):
 from corpus_sdk.embedding.framework_adapters.llamaindex import CorpusLlamaIndexEmbeddings
 embeddings = CorpusLlamaIndexEmbeddings(my_adapter, embedding_dimension=1536)
 ```
+
+---
