@@ -2085,7 +2085,7 @@ embedding_batch_size{framework,operation}  # histogram
 
 ## 16. Implementation Guidelines
 
-### 16.1. Adapter Implementation Order
+### 16.1. New Adapter Implementation Order
 
 1. Copy shared utilities from existing adapter
 2. Implement `__init__` with validation
