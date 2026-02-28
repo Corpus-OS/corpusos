@@ -188,7 +188,7 @@ The AI framework landscape has fragmented into five dominant orchestration layer
 * **LlamaIndex** implements `BaseEmbedding` as a Pydantic model with strict initialization order requirements that crash when attributes are set too early.
 * **Semantic Kernel** uses `EmbeddingGeneratorBase` with Pydantic constraints and multiple registration paths across versions.
 
-Building and maintaining separate adapters for each framework duplicates effort, fragments observability, and creates inconsistent error handling across an organization's AI stack. Framework-specific edge cases—like Chroma calling sync methods from event loops, or Pydantic rejecting undeclared attributes—cause production outages that are difficult to debug without deep framework expertise.
+Building and maintaining separate provides for each framework duplicates effort, fragments observability, and creates inconsistent error handling across an organization's AI stack. Framework-specific edge cases—like Chroma calling sync methods from event loops, or Pydantic rejecting undeclared attributes—cause production outages that are difficult to debug without deep framework expertise.
 
 The Corpus Framework Adapter Suite solves this by providing a single, battle-tested implementation of each framework's embedding interface, backed by the Corpus Embedding Protocol. Each adapter encapsulates the framework-specific hardening required for production deployments while sharing a common foundation for error handling, observability, and resource management. Organizations can standardize on Corpus embeddings once and use them across any supported framework without rebuilding adapter logic.
 
