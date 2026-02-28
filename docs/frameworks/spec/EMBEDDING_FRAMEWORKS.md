@@ -248,7 +248,8 @@ A developer might choose to disable the `strict_text_types` validation (which is
 
 ## 3. Terminology
 
-**Adapter** — Concrete implementation of a framework-specific embedding interface backed by a Corpus Embedding Protocol V1.
+**Adapter** — Concrete implementation of a framework-specific embedding interface backed by a Corpus Embedding Protocol V1
+.
 
 **Corpus Adapter** — The underlying embedding implementation that provides the `embed` method (duck-typed `EmbeddingProtocolV1`).
 
@@ -276,7 +277,7 @@ A developer might choose to disable the `strict_text_types` validation (which is
 
 ### 4.1. Protocol-First Design (MUST)
 
-All adapters MUST accept a `corpus_adapter` parameter that implements an `embed` method. Strict `isinstance` checks against `EmbeddingProtocolV1` are NOT REQUIRED; behavioral duck typing suffices.
+All adapters MUST accept a `corpus_adapter` parameter that implements an `embed` method. Strict `isinstance` checks against `EmbeddingProtocolV1` are NOT REQUIRED; behavioral duck typing suffices. Read QUICK_START.md to learn how to build a Corpus Adapter.
 
 ```python
 # Valid corpus_adapter implementations:
