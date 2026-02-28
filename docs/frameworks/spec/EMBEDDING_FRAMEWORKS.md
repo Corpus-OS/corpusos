@@ -248,7 +248,7 @@ A developer might choose to disable the `strict_text_types` validation (which is
 
 ## 3. Terminology
 
-**Adapter** — Concrete implementation of a framework-specific embedding interface backed by a Corpus Embedding Protocol V1 adapter.
+**Adapter** — Concrete implementation of a framework-specific embedding interface backed by a Corpus Embedding Protocol V1.
 
 **Corpus Adapter** — The underlying embedding implementation that provides the `embed` method (duck-typed `EmbeddingProtocolV1`).
 
