@@ -259,7 +259,7 @@ A developer might choose to disable strict validation in a controlled environmen
 
 ## 3. Terminology
 
-**Adapter** — Concrete implementation of a framework-specific graph interface backed by a Corpus Graph Protocol V1 adapter.
+**Adapter** — Concrete implementation of a framework-specific graph interface backed by a Corpus Graph Protocol V1.
 
 **Graph Adapter** — The underlying graph implementation that provides the GraphProtocolV1 interface.
 
