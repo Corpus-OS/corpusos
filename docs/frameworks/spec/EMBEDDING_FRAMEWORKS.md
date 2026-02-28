@@ -795,7 +795,7 @@ All adapters MUST produce the same embedding vectors for the same input text and
 
 ### 6.8. Translator Shim Equivalence (MUST)
 
-Some adapters (e.g., LlamaIndex, Semantic Kernel) use a `_TranslatorAdapterShim` to accommodate underlying corpus adapters that may not support the full EmbedSpec interface. The shim MUST ensure that the observable behavior (the embeddings returned) is **equivalent** regardless of which signature the underlying adapter implements.
+Some adapters (e.g., LlamaIndex, Semantic Kernel) use a `_TranslatorAdapterShim` to accommodate underlying Corpus Adapters that may not support the full EmbedSpec interface. The shim MUST ensure that the observable behavior (the embeddings returned) is **equivalent** regardless of which signature the underlying adapter implements.
 
 Specifically:
 
