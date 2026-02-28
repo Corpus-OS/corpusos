@@ -238,7 +238,7 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 
 **Example:**
 
-* The adapter MUST reject non-string inputs" indicates a strict requirement that must be implemented and verified.
+* The adapter MUST reject non-string inputs indicates a strict requirement that must be implemented and verified.
 * The adapter SHOULD log warnings for large batches" indicates a recommendation that may be deviated from only with good reason.
 
 **Justified Deviation Example:**
