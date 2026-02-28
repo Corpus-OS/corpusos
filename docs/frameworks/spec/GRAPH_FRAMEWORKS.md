@@ -192,7 +192,7 @@ The AI framework landscape has fragmented into five dominant orchestration layer
 - **LlamaIndex** implements `GraphStore` with specific expectations about triplet operations and callback propagation.
 - **Semantic Kernel** uses plugin-based architecture with context and settings objects that must be propagated to underlying operations.
 
-Building and maintaining separate adapters for each framework duplicates effort, fragments observability, and creates inconsistent error handling across an organization's AI stack. Framework-specific edge cases—like async streaming return shape variations, or context extraction failures—cause production outages that are difficult to debug without deep framework expertise.
+Building and maintaining separate providers for each framework duplicates effort, fragments observability, and creates inconsistent error handling across an organization's AI stack. Framework-specific edge cases—like async streaming return shape variations, or context extraction failures—cause production outages that are difficult to debug without deep framework expertise.
 
 The Corpus Framework Adapter Suite for Graph solves this by providing a single, battle-tested implementation of each framework's graph interface, backed by the Corpus Graph Protocol. Each adapter encapsulates the framework-specific hardening required for production deployments while sharing a common foundation for error handling, observability, and resource management. Organizations can standardize on Corpus graph operations once and use them across any supported framework without rebuilding adapter logic.
 
