@@ -2,7 +2,7 @@
 
 **File:** `corpus_sdk/router/reference_router.py`
 **Dependencies:** 0 (zero - Python stdlib only)
-**Status:** ✅ Production-ready, fully tested
+**Status:** ✅ development-ready, tested
 
 ## Overview
 
