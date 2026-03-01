@@ -403,14 +403,14 @@ async with ReferenceRouter(
 - High-scale services (load balancing, failover)
 - Advanced routing (model selection, A/B testing)
 - Enterprise deployments (audit logs, quotas)
+  
+## Performance Metrics
 
-## Performance Characteristics
-
-| Operation | Latency (p95) | Throughput | Memory |
-|-----------|---------------|------------|--------|
-| Route dispatch | < 1ms | 100k+ ops/sec | ~50KB |
-| Health check | Depends on adapters | N/A | ~10KB |
-| Streaming setup | < 2ms | 50k+ streams/sec | ~20KB |
+| Metric | Measured |
+|--------|----------|
+| **Route dispatch latency (p95)** | ~0.05ms (49μs) |
+| **Throughput (single-threaded)** | ~20k ops/sec |
+| **Memory per operation** | Not measured |
 
 **Router's import list:**
 ```
