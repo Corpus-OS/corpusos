@@ -1,4 +1,4 @@
-# Corpus OS Protocol and SDK
+# Corpus OS 
 
 <img width="1128" height="191" alt="image" src="https://github.com/user-attachments/assets/cb2fe4ef-be6a-4406-b899-23ad1ed30c08" />
 
@@ -12,7 +12,7 @@
 ![Embedding Protocol](https://img.shields.io/badge/Embedding%20Protocol-100%25%20Conformant-brightgreen)
 ![Tests](https://img.shields.io/badge/Conformance%20Tests-3%2C330-brightgreen)
 
-Reference implementation of the **Corpus OS Protocol and SDK** — a **wire-first, vendor-neutral** SDK for interoperable AI frameworks and data backends across four domains: **LLM**, **Embedding**, **Vector**, and **Graph**.
+Reference implementation of the **[Corpus OS](https://corpusos.com)** — a **wire-first, vendor-neutral** SDK for interoperable AI frameworks and data backends across four domains: **LLM**, **Embedding**, **Vector**, and **Graph**.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
@@ -30,7 +30,7 @@ Reference implementation of the **Corpus OS Protocol and SDK** — a **wire-firs
 
 **Keep your frameworks. Standardize your infrastructure.**
 
-> **Open-Core Model**: The Corpus OS Protocol Suite and SDK are **fully open source** (Apache-2.0). Corpus Router and official production adapters are **commercial**, optional, and built on the same public protocols. Using this SDK does **not** lock you into CORPUS Router.
+> **Open-Core Model**: The **[Corpus OS](https://corpusos.com)** Protocol Suite and SDK are **fully open source** (Apache-2.0). Corpus Router and official production adapters are **commercial**, optional, and built on the same public protocols. Using this SDK does **not** lock you into CORPUS Router.
 
 ---
 
