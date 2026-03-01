@@ -412,17 +412,6 @@ async with ReferenceRouter(
 | Health check | Depends on adapters | N/A | ~10KB |
 | Streaming setup | < 2ms | 50k+ streams/sec | ~20KB |
 
-## Zero Dependencies - Verified
-
-```bash
-$ pip show corpus-sdk | grep Requires
-Requires: 
-
-$ python -c "from corpus_sdk.router import ReferenceRouter; \
-             print(ReferenceRouter.__module__)"
-corpus_sdk.router.reference_router
-```
-
 **Router's import list:**
 ```
 typing
@@ -430,61 +419,6 @@ logging
 abc
 asyncio (optional)
 ```
-
-## Code Metrics
-
-```
-File: reference_router.py
-├── Class definitions: ~50 lines
-├── Core routing logic: ~100 lines
-├── Health aggregation: ~60 lines
-├── Lifecycle management: ~30 lines
-├── Error handling: ~40 lines
-├── Type hints and structure: ~40 lines
-├── Documentation strings: ~80 lines
-└── Whitespace/formatting: ~83 lines
-```
-
-## Test Results
-
-**Tests:** ✅ 7/7 passed (100%)
-**Zero Dependencies:** ✅ Confirmed
-**Error Handling:** ✅ All exceptions properly raised
-**Cleanup:** ✅ Adapters close without errors
-**Streaming:** ✅ AsyncIterator properly implemented
-**Health Checks:** ✅ Aggregation working
-
-## Validation Script
-
-```python
-# test_router_run.py - Validates all functionality
-async def test_router():
-    # Test initialization
-    router = ReferenceRouter()
-    assert router.available_protocols() == set()
-    
-    # Test with mocks
-    mock_llm = MockLLMAdapter()
-    router = ReferenceRouter(llm_adapter=mock_llm)
-    
-    # Test routing
-    result = await router.route({"op": "llm.complete", "args": {}})
-    assert "result" in result
-    
-    # Test health
-    health = await router.health_check()
-    assert "llm" in health
-    
-    # Test close
-    await router.close()
-```
-
-## Related Files
-
-- **Test Script:** `test_router_run.py` (working test with 7 validations)
-- **Test Output:** `router_test_output.txt` (execution evidence)
-- **JSON Results:** `test_results.json` (structured test data)
-- **Summary:** `test_summary.md` (this file's companion)
 
 ## Conclusion
 
