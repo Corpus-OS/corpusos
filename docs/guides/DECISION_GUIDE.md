@@ -1,4 +1,4 @@
-# Corpus OS Adapters Guide
+# Corpus OS Adapter Architecture Decision Guide
 
 ### From Implementation to Production: Adapter Patterns & Decisions
 
