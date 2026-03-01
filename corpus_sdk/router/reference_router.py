@@ -134,7 +134,7 @@ class ReferenceRouter:
     
     For production use cases requiring advanced routing, model selection,
     cost optimization, and multi-tenant isolation, see Corpus Router:
-        https://www.corpusos.com/products/router
+        https://corpusos.com/router.html
     """
     
     def __init__(
