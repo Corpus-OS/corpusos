@@ -1,5 +1,8 @@
 # Corpus OS Protocol and SDK
 
+<img width="1128" height="191" alt="image" src="https://github.com/user-attachments/assets/cb2fe4ef-be6a-4406-b899-23ad1ed30c08" />
+
+
 ![Version](https://img.shields.io/badge/version-1.0.0-blue)
 ![Python](https://img.shields.io/badge/python-3.10+-blue)
 ![License](https://img.shields.io/badge/license-Apache--2.0-green)
