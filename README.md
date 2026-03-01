@@ -1179,8 +1179,11 @@ Community questions: [GitHub Discussions](https://github.com/corpus/corpus-sdk/d
 | Production with official adapters | `corpus_sdk` + Official Adapters | **Commercial** |
 | Enterprise multi-provider | `corpus_sdk` + CORPUS Router (Managed or On-Prem) | **Commercial** |
 
+---
 **Contact:** [team@corpusos.com](mailto:team@corpusos.com) 
+**Website:** [https://corpusos.com](https://corpusos.com) 
+**Docs:** [https://docs.corpusos.com](https://docs.corpusos.com) 
 
 ---
 
-**Built by the Corpus OS team** — wire-level AI infrastructure you integrate once and stop thinking about.
+**Built by the Corpus OS team** — wire-level AI infrastructure you integrate once and connect anywhere.
