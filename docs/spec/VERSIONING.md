@@ -1,5 +1,67 @@
 # VERSIONING
 
+---
+
+## Summary
+
+This document defines the versioning and compatibility policy for the **Corpus Protocol Suite**—covering Graph, LLM, Vector, and Embedding components. It governs how we version **specifications**, **wire contracts (schemas/envelopes)**, **SDK libraries**, and **adapters**, ensuring predictable evolution and safe interoperability.
+
+**Key tenets:**
+
+- **Conformance‑driven compatibility** – A change is breaking **only if** it requires modifying an existing conformance test. Additive changes require only new tests; editorial changes require none.
+- **SemVer for all artifacts** – MAJOR for breaking changes, MINOR for additive, PATCH for non‑behavioral fixes.
+- **Wire compatibility within a MAJOR** – All clients and adapters speaking the same protocol major (e.g., `llm/v1.0`) must interoperate, regardless of SDK versions.
+- **Backward/forward compatibility rules** – Unknown keys in open schemas are ignored; closed schemas reject them. Error taxonomy, observability, streaming, and scoring conventions all have explicit versioning semantics.
+- **Deprecation lifecycle** – Features are announced, warned, and removed only after a minimum support window (≥ one MAJOR or 6 months).
+- **Capability negotiation** – Adapters advertise supported protocol majors and feature flags; clients probe and gate accordingly.
+- **Test‑first migration** – Every change is classified by its impact on conformance tests (add new vs. modify existing), and the release checklist enforces this.
+
+This policy is authoritative for all Corpus Protocol Suite releases. It works in concert with [`SCHEMA.md`](./SCHEMA.md) (wire shapes) and [`PROTOCOLS.md`](./PROTOCOLS.md) (operation semantics).
+
+---
+
+**Version:** 1.1 (see [Change History](#20-change-history))
+
+## Table of Contents
+
+0. [Conformance‑Driven Compatibility Rule (Normative)](#0-conformationdriven-compatibility-rule-normative)  
+   0.1 [Breaking Change Definition](#01-breaking-change-definition)  
+   0.2 [Additive Change Definition](#02-additive-change-definition)  
+   0.3 [Editorial / Tooling‑Only Changes](#03-editorial--tooling-only-changes)  
+1. [Goals](#1-goals)  
+2. [What we version (at a glance)](#2-what-we-version-at-a-glance)  
+3. [Semantic Versioning (how to decide MAJOR/MINOR/PATCH)](#3-semantic-versioning-how-to-decide-majorminorpatch)  
+   3.1 [Protocol & wire contracts (normative)](#31-protocol--wire-contracts-normative)  
+   3.2 [SDK libraries & adapters (public API)](#32-sdk-libraries--adapters-public-api)  
+4. [Compatibility Matrix](#4-compatibility-matrix)  
+5. [Backward/Forward Compatibility Rules (Normative)](#5-backwardforward-compatibility-rules-normative)  
+   5.1 [Unknown JSON keys (schema‑governed)](#51-unknown-json-keys-schema-governed)  
+   5.2 [Error taxonomy changes](#52-error-taxonomy-changes)  
+   5.3 [Observability](#53-observability)  
+   5.4 [Streaming lifecycle](#54-streaming-lifecycle)  
+   5.5 [Vector scoring conventions](#55-vector-scoring-conventions)  
+6. [Deprecation Policy](#6-deprecation-policy)  
+7. [Release Process & Tagging](#7-release-process--tagging)  
+   7.1 [Git tags](#71-git-tags)  
+   7.2 [Branches](#72-branches)  
+   7.3 [Artifacts](#73-artifacts)  
+8. [Pre‑Releases, RCs, and Experimental Features](#8-pre-releases-rcs-and-experimental-features)  
+9. [Long‑Term Support (LTS)](#9-long-term-support-lts)  
+10. [Multi‑Language Package Versioning](#10-multi-language-package-versioning)  
+11. [Capability Gating & Negotiation](#11-capability-gating--negotiation)  
+12. [Migration Checklist (for maintainers)](#12-migration-checklist-for-maintainers)  
+13. [Examples](#13-examples)  
+    13.1 [Add a new optional match attribute (Vector)](#131-add-a-new-optional-match-attribute-vector)  
+    13.2 [Tighten error retryability (LLM)](#132-tighten-error-retryability-llm)  
+    13.3 [Add `supports_deadline` to capabilities (Embedding)](#133-add-supports_deadline-to-capabilities-embedding)  
+14. [Versioning for Documentation & Examples](#14-versioning-for-documentation--examples)  
+15. [Security, CVEs, and Backports](#15-security-cves-and-backports)  
+16. [Notices & Legal](#16-notices--legal)  
+17. [FAQ](#17-faq)  
+18. [Quick Decision Table](#18-quick-decision-table)  
+19. [Checklist for Release Managers](#19-checklist-for-release-managers)  
+20. [Change History](#20-change-history)
+
 ## 0) Conformance‑Driven Compatibility Rule (Normative)
 
 Corpus defines compatibility through its conformance suites. A release is considered compatible **if and only if**:
