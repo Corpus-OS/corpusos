@@ -1,7 +1,5 @@
 # VERSIONING
 
----
-
 ## Summary
 
 This document defines the versioning and compatibility policy for the **Corpus Protocol Suite**—covering Graph, LLM, Vector, and Embedding components. It governs how we version **specifications**, **wire contracts (schemas/envelopes)**, **SDK libraries**, and **adapters**, ensuring predictable evolution and safe interoperability.
