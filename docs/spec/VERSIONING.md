@@ -14,12 +14,9 @@ This document defines the versioning and compatibility policy for the **Corpus P
 - **Capability negotiation** – Adapters advertise supported protocol majors and feature flags; clients probe and gate accordingly.
 - **Test‑first migration** – Every change is classified by its impact on conformance tests (add new vs. modify existing), and the release checklist enforces this.
 
-This policy is authoritative for all Corpus Protocol Suite releases. It works in concert with [`SCHEMA.md`](./SCHEMA.md) (wire shapes) and [`PROTOCOLS
-.md`](./PROTOCOL.md) (operation semantics).
+This policy is authoritative for all Corpus Protocol Suite releases. It works in concert with [`SCHEMA.md`](./SCHEMA.md) (wire shapes) and [`PROTOCOL.md`](./PROTOCOL.md) (operation semantics).
 
 ---
-
-**Version:** 1.1 (see [Change History](#20-change-history))
 
 ## Table of Contents
 
