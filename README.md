@@ -14,6 +14,13 @@
 
 Reference implementation of the **[Corpus OS](https://corpusos.com)** — a **wire-first, vendor-neutral** SDK for interoperable AI frameworks and data backends across four domains: **LLM**, **Embedding**, **Vector**, and **Graph**.
 
+---
+**Contact:** [team@corpusos.com](mailto:team@corpusos.com) 
+**Website:** [https://corpusos.com](https://corpusos.com) 
+**Docs:** [https://docs.corpusos.com](https://docs.corpusos.com) 
+
+---
+
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
 │  Your App / Agents / RAG Pipelines                                   │
