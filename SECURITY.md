@@ -177,7 +177,7 @@ cosign verify-blob \
 
 If a credential appears in code, logs, or artifacts:
 
-1. Notify `security@adaptersdk.org` (PGP-encrypted if possible).
+1. Notify `team@corpusos.com` (PGP-encrypted if possible).
 2. We will **revoke/rotate** affected credentials promptly.
 3. We will assess blast radius and publish remediation steps if user-facing.
 4. Public commit history may be rewritten to remove secrets (with notice).
@@ -295,10 +295,10 @@ References
 
 ## Appendix A — `security.txt` Template (Added)
 
-Place at: `https://adaptersdk.org/.well-known/security.txt` (and optionally `/security.txt` in the repo root).
+Place at: `https://corpusos.com/.well-known/security.txt` (and optionally `/security.txt` in the repo root).
 
 ```
-Contact: mailto:team@corpusos.com
+Contact: team@corpusos.com
 Encryption: https://team@corpusos.com/pgp.txt
 Preferred-Languages: en
 Policy: https://[github.com/yourorg/yourrepo/blob/main/SECURITY.md](https://github.com/Corpus-OS/corpusos/edit/main/SECURITY.md)
