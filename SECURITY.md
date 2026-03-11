@@ -10,8 +10,8 @@
 
 ## 1) Report a Vulnerability
 
-* **Email (preferred):** [security@adaptersdk.org](mailto:security@adaptersdk.org)
-* **security.txt:** `https://adaptersdk.org/.well-known/security.txt`
+* **Email (preferred):** [team@corpusos.com](mailto:team@corpusos.com)
+* **security.txt:** `https://corpusos.com/.well-known/security.txt`
 * **Public key (PGP):**
 
   ```
@@ -110,7 +110,7 @@ We will not pursue legal action for **good-faith** research that:
 * Does not exfiltrate raw prompts, vectors, or tenant identifiers,
 * Follows the **embargo** and coordinated disclosure terms above.
 
-If in doubt, ask us first at [security@adaptersdk.org](mailto:security@adaptersdk.org).
+If in doubt, ask us first at [team@corpusos.com](mailto:team@corpusos.com).
 
 **Load/DoS testing restriction:** Please **do not** perform stress/load testing against production infrastructure without prior written consent.
 
@@ -285,7 +285,7 @@ References
 
 ## 16) Contact
 
-* Security team: **[security@adaptersdk.org](mailto:security@adaptersdk.org)**
+* Security team: **[team@corpusos.com](mailto:team@corpusos.com)**
 * Emergency (best effort): prefix subject with **[URGENT]**
 * PGP fingerprint: `XXXX XXXX XXXX XXXX XXXX  XXXX XXXX XXXX XXXX XXXX`
 
@@ -298,11 +298,10 @@ References
 Place at: `https://adaptersdk.org/.well-known/security.txt` (and optionally `/security.txt` in the repo root).
 
 ```
-Contact: mailto:security@adaptersdk.org
-Encryption: https://adaptersdk.org/pgp.txt
+Contact: mailto:team@corpusos.com
+Encryption: https://team@corpusos.com/pgp.txt
 Preferred-Languages: en
-Policy: https://github.com/yourorg/yourrepo/blob/main/SECURITY.md
-Canonical: https://adaptersdk.org/.well-known/security.txt
+Policy: https://[github.com/yourorg/yourrepo/blob/main/SECURITY.md](https://github.com/Corpus-OS/corpusos/edit/main/SECURITY.md)
 Expires: 2026-12-31T23:59:59Z
 ```
 
