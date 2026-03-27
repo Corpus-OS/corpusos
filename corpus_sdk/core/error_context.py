@@ -1,4 +1,4 @@
-# corpus_sdk/llm/framework_adapters/common/error_context.py
+# corpus_sdk/core/error_context.py
 # SPDX-License-Identifier: Apache-2.0
 
 """
