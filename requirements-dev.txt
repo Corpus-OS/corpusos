@@ -21,7 +21,7 @@ referencing==0.30.2
 
 # --- LLM / agent frameworks ---
 openai>=1.108.1,<2
-langchain-core==1.2.7
+langchain-core==1.2.22
 crewai==0.203.2
 semantic-kernel==1.31.0
 
